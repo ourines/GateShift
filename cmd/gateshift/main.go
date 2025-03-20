@@ -460,7 +460,9 @@ func upgradeCmd() *cobra.Command {
 		Long: `Check for new versions of GateShift and upgrade if available.
 If a new version is found, it will be downloaded and installed automatically.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			fmt.Printf("Current version: v%s\n", Version)
+			// Remove 'v' prefix from current version if present
+			currentVersion := strings.TrimPrefix(Version, "v")
+			fmt.Printf("Current version: v%s\n", currentVersion)
 			fmt.Println("Checking for updates...")
 
 			// Get latest release info from GitHub
@@ -469,8 +471,8 @@ If a new version is found, it will be downloaded and installed automatically.`,
 				return fmt.Errorf("failed to check for updates: %w", err)
 			}
 
-			// Compare versions
-			if latestVersion == Version {
+			// Compare versions without 'v' prefix
+			if latestVersion == currentVersion {
 				fmt.Println("You are already running the latest version!")
 				return nil
 			}
