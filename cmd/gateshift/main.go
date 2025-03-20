@@ -220,6 +220,12 @@ func installCmd() *cobra.Command {
 				return fmt.Errorf("installation from GOPATH is not recommended")
 			}
 
+			// Get current working directory
+			cwd, err := os.Getwd()
+			if err != nil {
+				return fmt.Errorf("failed to get current directory: %w", err)
+			}
+
 			// Initialize sudo session with 15-minute timeout
 			sudoSession := utils.NewSudoSession(15 * time.Minute)
 
@@ -282,6 +288,14 @@ func installCmd() *cobra.Command {
 
 				fmt.Println("Installation successful!")
 				fmt.Println("You can now run 'gateshift' from anywhere in your terminal.")
+
+				// Clean up the binary in current directory if it's not the installed one
+				if filepath.Dir(absPath) == cwd {
+					fmt.Println("Cleaning up downloaded binary...")
+					if err := os.Remove(absPath); err != nil {
+						fmt.Printf("Warning: Failed to remove downloaded binary: %v\n", err)
+					}
+				}
 			case "windows":
 				// On Windows, we'll create a copy and add to PATH
 				if err := os.MkdirAll(installDir, 0755); err != nil {
@@ -314,6 +328,14 @@ func installCmd() *cobra.Command {
 				fmt.Println("Installation successful!")
 				fmt.Println("You may need to restart your terminal or system for the PATH changes to take effect.")
 				fmt.Println("After that, you can run 'gateshift' from anywhere in your terminal.")
+
+				// Clean up the binary in current directory if it's not the installed one
+				if filepath.Dir(absPath) == cwd {
+					fmt.Println("Cleaning up downloaded binary...")
+					if err := os.Remove(absPath); err != nil {
+						fmt.Printf("Warning: Failed to remove downloaded binary: %v\n", err)
+					}
+				}
 			}
 
 			return nil
