@@ -44,12 +44,6 @@ jobs:
           sha256sum gateshift-linux-amd64 gateshift-linux-arm64 gateshift-darwin-amd64 gateshift-darwin-arm64 gateshift-windows-amd64.exe > checksums.txt
           cat checksums.txt
       
-      - name: Set checksums
-        id: set_checksums
-        run: |
-          CHECKSUMS="$(cat bin/checksums.txt)"
-          echo "checksums=$CHECKSUMS" >> $GITHUB_OUTPUT
-
       - name: Generate changelog
         id: changelog
         run: |
@@ -78,7 +72,7 @@ jobs:
             
             ## SHA256 Checksums
             ```
-            ${{ steps.set_checksums.outputs.checksums }}
+            $(cat bin/checksums.txt)
             ```
           files: |
             bin/gateshift-linux-amd64
