@@ -1,0 +1,74 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.20'
+          check-latest: true
+
+      - name: Build all platforms
+        run: make build-all
+
+      - name: Get version from tag
+        id: get_version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_ENV
+        
+      - name: Generate checksums
+        run: |
+          cd bin
+          sha256sum proxy_linux_amd64 proxy_linux_arm64 proxy_darwin_amd64 proxy_darwin_arm64 proxy_windows_amd64.exe > checksums.txt
+          cat checksums.txt
+          echo "CHECKSUMS<<EOF" >> $GITHUB_ENV
+          cat checksums.txt >> $GITHUB_ENV
+          echo "EOF" >> $GITHUB_ENV
+
+      - name: Generate changelog
+        id: changelog
+        run: |
+          echo "CHANGELOG<<EOF" >> $GITHUB_ENV
+          # Handle both first release and subsequent releases
+          if git describe --tags --abbrev=0 HEAD^ 2>/dev/null; then
+            git log $(git describe --tags --abbrev=0 HEAD^)..HEAD --pretty=format:'* %s' >> $GITHUB_ENV
+          else
+            git log --pretty=format:'* %s' >> $GITHUB_ENV
+          fi
+          echo "EOF" >> $GITHUB_ENV
+
+      - name: Create Release
+        id: create_release
+        uses: softprops/action-gh-release@v1
+        with:
+          name: Release ${{ env.VERSION }}
+          draft: false
+          prerelease: false
+          body: |
+            ## Changelog
+            ${{ env.CHANGELOG }}
+            
+            ## SHA256 Checksums
+            ```
+            ${{ env.CHECKSUMS }}
+            ```
+          files: |
+            bin/proxy_linux_amd64
+            bin/proxy_linux_arm64
+            bin/proxy_darwin_amd64
+            bin/proxy_darwin_arm64
+            bin/proxy_windows_amd64.exe
+            bin/checksums.txt
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} 
