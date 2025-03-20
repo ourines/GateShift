@@ -187,160 +187,83 @@ func versionCmd() *cobra.Command {
 func installCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "install",
-		Short: "Install GateShift system-wide",
-		Long:  `Install GateShift to make it available system-wide for all users.`,
+		Short: "Install GateShift to system",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			// Get the executable path
-			execPath, err := os.Executable()
+			// 获取当前二进制文件的路径
+			ex, err := os.Executable()
 			if err != nil {
 				return fmt.Errorf("failed to get executable path: %w", err)
 			}
 
-			// Get absolute path
-			absPath, err := filepath.Abs(execPath)
-			if err != nil {
-				return fmt.Errorf("failed to get absolute path: %w", err)
+			// 检查目标路径是否已存在
+			targetPath := "/usr/local/bin/gateshift"
+			if _, err := os.Stat(targetPath); err == nil {
+				// 如果文件已存在，检查是否是相同文件
+				if isSameFile(ex, targetPath) {
+					fmt.Println("GateShift is already installed at /usr/local/bin/gateshift")
+					fmt.Println("If you want to reinstall, please run 'sudo rm /usr/local/bin/gateshift' first")
+					return nil
+				}
 			}
 
-			// Check if running from GOPATH/bin
-			gopath := os.Getenv("GOPATH")
-			if gopath == "" {
-				gopath = filepath.Join(os.Getenv("HOME"), "go")
-			}
-			gopathBin := filepath.Join(gopath, "bin")
+			fmt.Printf("Installing GateShift to %s\n", targetPath)
 
-			if strings.HasPrefix(absPath, gopathBin) {
-				fmt.Printf("Warning: You are running GateShift from GOPATH (%s)\n", gopathBin)
-				fmt.Println("If you want to use GateShift system-wide, you should:")
-				fmt.Println("1. Remove the GOPATH version:")
-				fmt.Printf("   rm %s\n", absPath)
-				fmt.Println("2. Download the latest release from:")
-				fmt.Println("   https://github.com/ourines/GateShift/releases")
-				fmt.Println("3. Then run the install command again")
-				return fmt.Errorf("installation from GOPATH is not recommended")
+			// 复制文件
+			if err := copyFile(ex, targetPath); err != nil {
+				return fmt.Errorf("failed to copy binary: %w", err)
 			}
 
-			// Get current working directory
+			// 设置执行权限
+			if err := os.Chmod(targetPath, 0755); err != nil {
+				return fmt.Errorf("failed to set executable permission: %w", err)
+			}
+
+			fmt.Println("Installation completed successfully!")
+
+			// 获取当前工作目录
 			cwd, err := os.Getwd()
-			if err != nil {
-				return fmt.Errorf("failed to get current directory: %w", err)
-			}
-
-			// Initialize sudo session with 15-minute timeout
-			sudoSession := utils.NewSudoSession(15 * time.Minute)
-
-			// Define the installation directory based on OS
-			var installDir string
-			var installPath string
-
-			switch runtime.GOOS {
-			case "darwin", "linux":
-				installDir = "/usr/local/bin"
-				installPath = filepath.Join(installDir, "gateshift")
-
-				// Check if already installed in GOPATH
-				gopathVersion := filepath.Join(gopathBin, "gateshift")
-				if _, err := os.Stat(gopathVersion); err == nil {
-					fmt.Printf("Found existing installation in GOPATH: %s\n", gopathVersion)
-					fmt.Println("To avoid conflicts, you should remove it:")
-					fmt.Printf("rm %s\n", gopathVersion)
-					return fmt.Errorf("please remove GOPATH version first")
-				}
-			case "windows":
-				// On Windows, we'll use Program Files
-				installDir = os.Getenv("ProgramFiles")
-				if installDir == "" {
-					installDir = "C:\\Program Files"
-				}
-				installDir = filepath.Join(installDir, "GateShift")
-				installPath = filepath.Join(installDir, "gateshift.exe")
-
-				// Check if already installed in GOPATH
-				gopathVersion := filepath.Join(gopathBin, "gateshift.exe")
-				if _, err := os.Stat(gopathVersion); err == nil {
-					fmt.Printf("Found existing installation in GOPATH: %s\n", gopathVersion)
-					fmt.Println("To avoid conflicts, you should remove it:")
-					fmt.Printf("del %s\n", gopathVersion)
-					return fmt.Errorf("please remove GOPATH version first")
-				}
-			default:
-				return fmt.Errorf("unsupported operating system: %s", runtime.GOOS)
-			}
-
-			fmt.Printf("Installing GateShift to %s\n", installPath)
-
-			// Create installation directory if it doesn't exist
-			if err := os.MkdirAll(installDir, 0755); err != nil {
-				return fmt.Errorf("failed to create installation directory: %w", err)
-			}
-
-			// Copy the binary to the installation directory
-			switch runtime.GOOS {
-			case "darwin", "linux":
-				if err := sudoSession.RunWithPrivileges("cp", absPath, installPath); err != nil {
-					return fmt.Errorf("failed to copy binary: %w", err)
-				}
-
-				// Make it executable
-				if err := sudoSession.RunWithPrivileges("chmod", "+x", installPath); err != nil {
-					return fmt.Errorf("failed to make binary executable: %w", err)
-				}
-
-				fmt.Println("Installation successful!")
-				fmt.Println("You can now run 'gateshift' from anywhere in your terminal.")
-
-				// Clean up the binary in current directory if it's not the installed one
-				if filepath.Dir(absPath) == cwd {
-					fmt.Println("Cleaning up downloaded binary...")
-					if err := os.Remove(absPath); err != nil {
-						fmt.Printf("Warning: Failed to remove downloaded binary: %v\n", err)
-					}
-				}
-			case "windows":
-				// On Windows, we'll create a copy and add to PATH
-				if err := os.MkdirAll(installDir, 0755); err != nil {
-					return fmt.Errorf("failed to create installation directory: %w", err)
-				}
-
-				// Copy the file
-				input, err := os.ReadFile(absPath)
-				if err != nil {
-					return fmt.Errorf("failed to read binary: %w", err)
-				}
-
-				if err := os.WriteFile(installPath, input, 0755); err != nil {
-					return fmt.Errorf("failed to write binary: %w", err)
-				}
-
-				// Add to PATH using PowerShell
-				addToPathCmd := fmt.Sprintf(
-					"$currentPath = [Environment]::GetEnvironmentVariable('Path', 'Machine'); "+
-						"if ($currentPath -notlike '*%s*') { "+
-						"[Environment]::SetEnvironmentVariable('Path', $currentPath + ';%s', 'Machine') "+
-						"}", installDir, installDir)
-
-				psCmd := exec.Command("powershell", "-Command", addToPathCmd)
-				if err := sudoSession.RunWithPrivileges(psCmd.Path, psCmd.Args[1:]...); err != nil {
-					fmt.Println("Warning: Failed to add to PATH automatically.")
-					fmt.Printf("Please add %s to your PATH manually.\n", installDir)
-				}
-
-				fmt.Println("Installation successful!")
-				fmt.Println("You may need to restart your terminal or system for the PATH changes to take effect.")
-				fmt.Println("After that, you can run 'gateshift' from anywhere in your terminal.")
-
-				// Clean up the binary in current directory if it's not the installed one
-				if filepath.Dir(absPath) == cwd {
-					fmt.Println("Cleaning up downloaded binary...")
-					if err := os.Remove(absPath); err != nil {
-						fmt.Printf("Warning: Failed to remove downloaded binary: %v\n", err)
+			if err == nil {
+				// 检查当前目录下是否存在二进制文件，如果存在则删除
+				binPath := filepath.Join(cwd, filepath.Base(ex))
+				if binPath != ex { // 确保不会删除正在运行的文件
+					if err := os.Remove(binPath); err == nil {
+						fmt.Println("Cleaned up downloaded binary file")
 					}
 				}
 			}
 
+			fmt.Println("\nRequesting elevated privileges for network configuration...")
 			return nil
 		},
 	}
+}
+
+// 检查两个文件是否相同
+func isSameFile(file1, file2 string) bool {
+	info1, err1 := os.Stat(file1)
+	info2, err2 := os.Stat(file2)
+	if err1 != nil || err2 != nil {
+		return false
+	}
+	return info1.Size() == info2.Size() && info1.ModTime().Equal(info2.ModTime())
+}
+
+// 复制文件
+func copyFile(src, dst string) error {
+	sourceFile, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer sourceFile.Close()
+
+	destFile, err := os.Create(dst)
+	if err != nil {
+		return err
+	}
+	defer destFile.Close()
+
+	_, err = io.Copy(destFile, sourceFile)
+	return err
 }
 
 func uninstallCmd() *cobra.Command {
