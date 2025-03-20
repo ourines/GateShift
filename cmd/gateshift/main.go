@@ -160,6 +160,10 @@ func statusCmd() *cobra.Command {
 			// Check internet connectivity
 			hasInternet := gateway.CheckInternetConnectivity()
 
+			// Get public IP address
+			publicIP, err := getPublicIP()
+			publicIPv6, err6 := getPublicIPv6()
+
 			// Print status information
 			fmt.Printf("Active Network Interface: %s\n", iface.Name)
 			fmt.Printf("Service Name: %s\n", iface.ServiceName)
@@ -168,9 +172,79 @@ func statusCmd() *cobra.Command {
 			fmt.Printf("Current Gateway: %s\n", iface.Gateway)
 			fmt.Printf("Internet Connectivity: %v\n", hasInternet)
 
+			if err == nil {
+				fmt.Printf("Public IPv4: %s\n", publicIP)
+			} else {
+				fmt.Printf("Public IPv4: Failed to retrieve (%v)\n", err)
+			}
+
+			if err6 == nil {
+				fmt.Printf("Public IPv6: %s\n", publicIPv6)
+			} else {
+				fmt.Printf("Public IPv6: Failed to retrieve (%v)\n", err6)
+			}
+
 			return nil
 		},
 	}
+}
+
+// getPublicIP 通过 Cloudflare 获取公网 IPv4 地址
+func getPublicIP() (string, error) {
+	client := &http.Client{Timeout: 5 * time.Second}
+	req, err := http.NewRequest("GET", "https://1.1.1.1/cdn-cgi/trace", nil)
+	if err != nil {
+		return "", err
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", err
+	}
+
+	lines := strings.Split(string(body), "\n")
+	for _, line := range lines {
+		if strings.HasPrefix(line, "ip=") {
+			return strings.TrimPrefix(line, "ip="), nil
+		}
+	}
+
+	return "", fmt.Errorf("IP not found in response")
+}
+
+// getPublicIPv6 通过 Cloudflare 获取公网 IPv6 地址
+func getPublicIPv6() (string, error) {
+	client := &http.Client{Timeout: 5 * time.Second}
+	req, err := http.NewRequest("GET", "https://[2606:4700:4700::1111]/cdn-cgi/trace", nil)
+	if err != nil {
+		return "", err
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", err
+	}
+
+	lines := strings.Split(string(body), "\n")
+	for _, line := range lines {
+		if strings.HasPrefix(line, "ip=") {
+			return strings.TrimPrefix(line, "ip="), nil
+		}
+	}
+
+	return "", fmt.Errorf("IPv6 not found in response")
 }
 
 func versionCmd() *cobra.Command {
