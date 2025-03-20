@@ -178,7 +178,7 @@ func versionCmd() *cobra.Command {
 		Use:   "version",
 		Short: "Show the version information",
 		Run: func(cmd *cobra.Command, args []string) {
-			fmt.Printf("Proxy Gateway Switcher v%s\n", Version)
+			fmt.Printf("Proxy Gateway Switcher v%s\n", strings.TrimPrefix(Version, "v"))
 			fmt.Printf("Build time: %s\n", BuildTime)
 		},
 	}
