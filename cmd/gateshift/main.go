@@ -18,9 +18,9 @@ import (
 var (
 	cfgFile string
 	rootCmd = &cobra.Command{
-		Use:   "proxy",
+		Use:   "gateshift",
 		Short: "A tool to switch between gateway configurations",
-		Long: `Proxy is a cross-platform tool for switching between gateway configurations.
+		Long: `GateShift is a cross-platform tool for switching between gateway configurations.
 It allows you to easily switch between your default gateway and a proxy gateway.`,
 	}
 )
@@ -36,7 +36,7 @@ func init() {
 	rootCmd.AddCommand(uninstallCmd())
 
 	// Add flags
-	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default is $HOME/.proxy/config.yaml)")
+	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default is $HOME/.gateshift/config.yaml)")
 }
 
 func proxyCmd() *cobra.Command {
@@ -207,15 +207,15 @@ func installCmd() *cobra.Command {
 			switch runtime.GOOS {
 			case "darwin", "linux":
 				installDir = "/usr/local/bin"
-				installPath = filepath.Join(installDir, "proxy")
+				installPath = filepath.Join(installDir, "gateshift")
 			case "windows":
 				// On Windows, we'll use Program Files
 				installDir = os.Getenv("ProgramFiles")
 				if installDir == "" {
 					installDir = "C:\\Program Files"
 				}
-				installDir = filepath.Join(installDir, "Proxy")
-				installPath = filepath.Join(installDir, "proxy.exe")
+				installDir = filepath.Join(installDir, "GateShift")
+				installPath = filepath.Join(installDir, "gateshift.exe")
 			default:
 				return fmt.Errorf("unsupported operating system: %s", runtime.GOOS)
 			}
@@ -295,15 +295,15 @@ func uninstallCmd() *cobra.Command {
 
 			switch runtime.GOOS {
 			case "darwin", "linux":
-				installPath = "/usr/local/bin/proxy"
+				installPath = "/usr/local/bin/gateshift"
 			case "windows":
 				// On Windows, check Program Files
 				installDir = os.Getenv("ProgramFiles")
 				if installDir == "" {
 					installDir = "C:\\Program Files"
 				}
-				installDir = filepath.Join(installDir, "Proxy")
-				installPath = filepath.Join(installDir, "proxy.exe")
+				installDir = filepath.Join(installDir, "GateShift")
+				installPath = filepath.Join(installDir, "gateshift.exe")
 			default:
 				return fmt.Errorf("unsupported operating system: %s", runtime.GOOS)
 			}

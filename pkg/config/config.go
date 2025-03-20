@@ -23,7 +23,7 @@ func LoadConfig() (*Config, error) {
 	}
 
 	// Create config directory if it doesn't exist
-	configDir := filepath.Join(home, ".proxy")
+	configDir := filepath.Join(home, ".gateshift")
 	if err := os.MkdirAll(configDir, 0755); err != nil {
 		return nil, fmt.Errorf("could not create config directory: %w", err)
 	}
