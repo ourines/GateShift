@@ -2,6 +2,7 @@
 
 ![License](https://img.shields.io/github/license/ourines/GateShift)
 ![GitHub release (latest by date)](https://img.shields.io/github/v/release/ourines/GateShift)
+[![codecov](https://codecov.io/gh/ourines/GateShift/branch/main/graph/badge.svg)](https://codecov.io/gh/ourines/GateShift)
 
 A cross-platform gateway switching tool designed for OpenWrt bypass routers, allowing seamless traffic path switching between default and proxy gateways.
 
