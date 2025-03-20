@@ -1,4 +1,4 @@
-module github.com/user/proxy
+module github.com/ourines/GateShift
 
 go 1.18
 
