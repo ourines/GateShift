@@ -1,7 +1,10 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -35,6 +38,7 @@ func init() {
 	rootCmd.AddCommand(versionCmd())
 	rootCmd.AddCommand(installCmd())
 	rootCmd.AddCommand(uninstallCmd())
+	rootCmd.AddCommand(upgradeCmd())
 
 	// Add flags
 	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default is $HOME/.gateshift/config.yaml)")
@@ -423,6 +427,229 @@ func uninstallCmd() *cobra.Command {
 			return nil
 		},
 	}
+}
+
+func upgradeCmd() *cobra.Command {
+	var autoApprove bool
+
+	cmd := &cobra.Command{
+		Use:   "upgrade",
+		Short: "Check for updates and upgrade GateShift",
+		Long: `Check for new versions of GateShift and upgrade if available.
+If a new version is found, it will be downloaded and installed automatically.`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			fmt.Printf("Current version: v%s\n", Version)
+			fmt.Println("Checking for updates...")
+
+			// Get latest release info from GitHub
+			latestVersion, downloadURL, err := getLatestRelease()
+			if err != nil {
+				return fmt.Errorf("failed to check for updates: %w", err)
+			}
+
+			// Compare versions
+			if latestVersion == Version {
+				fmt.Println("You are already running the latest version!")
+				return nil
+			}
+
+			fmt.Printf("New version available: v%s\n", latestVersion)
+
+			// Ask for confirmation unless auto-approve is set
+			if !autoApprove {
+				fmt.Print("Do you want to upgrade? [y/N] ")
+				var response string
+				fmt.Scanln(&response)
+				if response != "y" && response != "Y" {
+					fmt.Println("Upgrade cancelled")
+					return nil
+				}
+			}
+
+			// Create temporary directory for download
+			tmpDir, err := os.MkdirTemp("", "gateshift-upgrade")
+			if err != nil {
+				return fmt.Errorf("failed to create temporary directory: %w", err)
+			}
+			defer os.RemoveAll(tmpDir)
+
+			// Download the new version
+			fmt.Println("Downloading new version...")
+			binaryPath := filepath.Join(tmpDir, "gateshift")
+			if runtime.GOOS == "windows" {
+				binaryPath += ".exe"
+			}
+
+			if err := downloadFile(downloadURL, binaryPath); err != nil {
+				return fmt.Errorf("failed to download new version: %w", err)
+			}
+
+			// Make the downloaded file executable
+			if runtime.GOOS != "windows" {
+				if err := os.Chmod(binaryPath, 0755); err != nil {
+					return fmt.Errorf("failed to make binary executable: %w", err)
+				}
+			}
+
+			// Get current executable path
+			execPath, err := os.Executable()
+			if err != nil {
+				return fmt.Errorf("failed to get executable path: %w", err)
+			}
+
+			// Initialize sudo session
+			sudoSession := utils.NewSudoSession(15 * time.Minute)
+
+			// Replace the current binary
+			fmt.Println("Installing new version...")
+			if runtime.GOOS == "windows" {
+				// On Windows, we need to rename instead of direct replacement
+				backupPath := execPath + ".old"
+				if err := os.Rename(execPath, backupPath); err != nil {
+					return fmt.Errorf("failed to backup current binary: %w", err)
+				}
+				if err := os.Rename(binaryPath, execPath); err != nil {
+					// Try to restore backup
+					os.Rename(backupPath, execPath)
+					return fmt.Errorf("failed to install new version: %w", err)
+				}
+				os.Remove(backupPath)
+			} else {
+				if err := sudoSession.RunWithPrivileges("cp", binaryPath, execPath); err != nil {
+					return fmt.Errorf("failed to install new version: %w", err)
+				}
+			}
+
+			fmt.Printf("Successfully upgraded to v%s!\n", latestVersion)
+			fmt.Println("Please restart GateShift to use the new version.")
+			return nil
+		},
+	}
+
+	cmd.Flags().BoolVarP(&autoApprove, "yes", "y", false, "Automatically approve upgrade without confirmation")
+	return cmd
+}
+
+func getLatestRelease() (version string, downloadURL string, err error) {
+	// GitHub API URL for latest release
+	apiURL := "https://api.github.com/repos/ourines/GateShift/releases/latest"
+
+	// Create HTTP client with timeout
+	client := &http.Client{Timeout: 10 * time.Second}
+
+	// Make request
+	resp, err := client.Get(apiURL)
+	if err != nil {
+		return "", "", err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", "", fmt.Errorf("GitHub API returned status %d", resp.StatusCode)
+	}
+
+	// Parse response
+	var release struct {
+		TagName string `json:"tag_name"`
+		Assets  []struct {
+			Name               string `json:"name"`
+			BrowserDownloadURL string `json:"browser_download_url"`
+		} `json:"assets"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&release); err != nil {
+		return "", "", err
+	}
+
+	// Remove 'v' prefix from version if present
+	version = strings.TrimPrefix(release.TagName, "v")
+
+	// Find the appropriate asset for current platform
+	var assetName string
+	switch runtime.GOOS {
+	case "darwin":
+		if runtime.GOARCH == "arm64" {
+			assetName = fmt.Sprintf("gateshift-darwin-arm64")
+		} else {
+			assetName = fmt.Sprintf("gateshift-darwin-amd64")
+		}
+	case "linux":
+		if runtime.GOARCH == "arm64" {
+			assetName = fmt.Sprintf("gateshift-linux-arm64")
+		} else {
+			assetName = fmt.Sprintf("gateshift-linux-amd64")
+		}
+	case "windows":
+		assetName = fmt.Sprintf("gateshift-windows-amd64.exe")
+	default:
+		return "", "", fmt.Errorf("unsupported platform: %s", runtime.GOOS)
+	}
+
+	// Find download URL for the appropriate asset
+	for _, asset := range release.Assets {
+		if asset.Name == assetName {
+			return version, asset.BrowserDownloadURL, nil
+		}
+	}
+
+	return "", "", fmt.Errorf("no suitable binary found for platform %s/%s", runtime.GOOS, runtime.GOARCH)
+}
+
+func downloadFile(url string, filepath string) error {
+	// Create HTTP client with timeout
+	client := &http.Client{Timeout: 5 * time.Minute}
+
+	// Make request
+	resp, err := client.Get(url)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("download failed with status %d", resp.StatusCode)
+	}
+
+	// Create output file
+	out, err := os.Create(filepath)
+	if err != nil {
+		return err
+	}
+	defer out.Close()
+
+	// Create progress bar
+	size := resp.ContentLength
+	progress := &ProgressWriter{
+		Total:     size,
+		Writer:    out,
+		LastPrint: time.Now(),
+	}
+
+	// Copy with progress
+	_, err = io.Copy(progress, resp.Body)
+	fmt.Println() // New line after progress bar
+	return err
+}
+
+type ProgressWriter struct {
+	Total     int64
+	Current   int64
+	Writer    io.Writer
+	LastPrint time.Time
+}
+
+func (pw *ProgressWriter) Write(p []byte) (int, error) {
+	n, err := pw.Writer.Write(p)
+	pw.Current += int64(n)
+
+	// Update progress every 100ms
+	if time.Since(pw.LastPrint) >= 100*time.Millisecond {
+		percentage := float64(pw.Current) / float64(pw.Total) * 100
+		fmt.Printf("\rDownloading... %.1f%% (%d/%d bytes)", percentage, pw.Current, pw.Total)
+		pw.LastPrint = time.Now()
+	}
+
+	return n, err
 }
 
 func switchGateway(newGateway string) error {
