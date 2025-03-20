@@ -17,3 +17,4 @@ bin/
 
 # Go workspace file
 go.work 
+gateway.sh
