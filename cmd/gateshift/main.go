@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -182,12 +183,9 @@ func versionCmd() *cobra.Command {
 func installCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "install",
-		Short: "Install the proxy tool system-wide",
-		Long:  `Install the proxy tool to make it available system-wide for all users.`,
+		Short: "Install GateShift system-wide",
+		Long:  `Install GateShift to make it available system-wide for all users.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			// Initialize sudo session with 15-minute timeout
-			sudoSession := utils.NewSudoSession(15 * time.Minute)
-
 			// Get the executable path
 			execPath, err := os.Executable()
 			if err != nil {
@@ -200,6 +198,27 @@ func installCmd() *cobra.Command {
 				return fmt.Errorf("failed to get absolute path: %w", err)
 			}
 
+			// Check if running from GOPATH/bin
+			gopath := os.Getenv("GOPATH")
+			if gopath == "" {
+				gopath = filepath.Join(os.Getenv("HOME"), "go")
+			}
+			gopathBin := filepath.Join(gopath, "bin")
+
+			if strings.HasPrefix(absPath, gopathBin) {
+				fmt.Printf("Warning: You are running GateShift from GOPATH (%s)\n", gopathBin)
+				fmt.Println("If you want to use GateShift system-wide, you should:")
+				fmt.Println("1. Remove the GOPATH version:")
+				fmt.Printf("   rm %s\n", absPath)
+				fmt.Println("2. Download the latest release from:")
+				fmt.Println("   https://github.com/ourines/GateShift/releases")
+				fmt.Println("3. Then run the install command again")
+				return fmt.Errorf("installation from GOPATH is not recommended")
+			}
+
+			// Initialize sudo session with 15-minute timeout
+			sudoSession := utils.NewSudoSession(15 * time.Minute)
+
 			// Define the installation directory based on OS
 			var installDir string
 			var installPath string
@@ -208,6 +227,15 @@ func installCmd() *cobra.Command {
 			case "darwin", "linux":
 				installDir = "/usr/local/bin"
 				installPath = filepath.Join(installDir, "gateshift")
+
+				// Check if already installed in GOPATH
+				gopathVersion := filepath.Join(gopathBin, "gateshift")
+				if _, err := os.Stat(gopathVersion); err == nil {
+					fmt.Printf("Found existing installation in GOPATH: %s\n", gopathVersion)
+					fmt.Println("To avoid conflicts, you should remove it:")
+					fmt.Printf("rm %s\n", gopathVersion)
+					return fmt.Errorf("please remove GOPATH version first")
+				}
 			case "windows":
 				// On Windows, we'll use Program Files
 				installDir = os.Getenv("ProgramFiles")
@@ -216,6 +244,15 @@ func installCmd() *cobra.Command {
 				}
 				installDir = filepath.Join(installDir, "GateShift")
 				installPath = filepath.Join(installDir, "gateshift.exe")
+
+				// Check if already installed in GOPATH
+				gopathVersion := filepath.Join(gopathBin, "gateshift.exe")
+				if _, err := os.Stat(gopathVersion); err == nil {
+					fmt.Printf("Found existing installation in GOPATH: %s\n", gopathVersion)
+					fmt.Println("To avoid conflicts, you should remove it:")
+					fmt.Printf("del %s\n", gopathVersion)
+					return fmt.Errorf("please remove GOPATH version first")
+				}
 			default:
 				return fmt.Errorf("unsupported operating system: %s", runtime.GOOS)
 			}
@@ -283,19 +320,28 @@ func installCmd() *cobra.Command {
 func uninstallCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "uninstall",
-		Short: "Uninstall the proxy tool from the system",
-		Long:  `Remove the proxy tool from system-wide installation.`,
+		Short: "Uninstall GateShift from the system",
+		Long:  `Remove GateShift from system-wide installation.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			// Initialize sudo session with 15-minute timeout
 			sudoSession := utils.NewSudoSession(15 * time.Minute)
 
+			// Get GOPATH
+			gopath := os.Getenv("GOPATH")
+			if gopath == "" {
+				gopath = filepath.Join(os.Getenv("HOME"), "go")
+			}
+			gopathBin := filepath.Join(gopath, "bin")
+
 			// Define the installation path based on OS
 			var installPath string
 			var installDir string
+			var gopathVersion string
 
 			switch runtime.GOOS {
 			case "darwin", "linux":
 				installPath = "/usr/local/bin/gateshift"
+				gopathVersion = filepath.Join(gopathBin, "gateshift")
 			case "windows":
 				// On Windows, check Program Files
 				installDir = os.Getenv("ProgramFiles")
@@ -304,52 +350,73 @@ func uninstallCmd() *cobra.Command {
 				}
 				installDir = filepath.Join(installDir, "GateShift")
 				installPath = filepath.Join(installDir, "gateshift.exe")
+				gopathVersion = filepath.Join(gopathBin, "gateshift.exe")
 			default:
 				return fmt.Errorf("unsupported operating system: %s", runtime.GOOS)
 			}
 
-			// Check if the binary exists in the installation path
-			if _, err := os.Stat(installPath); os.IsNotExist(err) {
-				return fmt.Errorf("proxy is not installed at %s", installPath)
+			// Check both system and GOPATH installations
+			systemInstalled := false
+			gopathInstalled := false
+
+			if _, err := os.Stat(installPath); err == nil {
+				systemInstalled = true
+			}
+			if _, err := os.Stat(gopathVersion); err == nil {
+				gopathInstalled = true
 			}
 
-			fmt.Printf("Uninstalling proxy from %s\n", installPath)
+			if !systemInstalled && !gopathInstalled {
+				return fmt.Errorf("GateShift is not installed at %s or %s", installPath, gopathVersion)
+			}
 
-			// Remove the binary
-			switch runtime.GOOS {
-			case "darwin", "linux":
-				if err := sudoSession.RunWithPrivileges("rm", installPath); err != nil {
-					return fmt.Errorf("failed to remove binary: %w", err)
+			// Remove system installation if exists
+			if systemInstalled {
+				fmt.Printf("Uninstalling GateShift from %s\n", installPath)
+
+				switch runtime.GOOS {
+				case "darwin", "linux":
+					if err := sudoSession.RunWithPrivileges("rm", installPath); err != nil {
+						return fmt.Errorf("failed to remove binary: %w", err)
+					}
+				case "windows":
+					if err := os.Remove(installPath); err != nil {
+						return fmt.Errorf("failed to remove binary: %w", err)
+					}
+
+					// Try to remove the directory if it's empty
+					if err := os.Remove(installDir); err != nil {
+						fmt.Printf("Note: Could not remove directory %s. It may not be empty.\n", installDir)
+					}
+
+					// Remove from PATH using PowerShell
+					removeFromPathCmd := fmt.Sprintf(
+						"$currentPath = [Environment]::GetEnvironmentVariable('Path', 'Machine'); "+
+							"if ($currentPath -like '*%s*') { "+
+							"$newPath = $currentPath -replace '%s;', '' -replace ';%s', '' -replace '%s'; "+
+							"[Environment]::SetEnvironmentVariable('Path', $newPath, 'Machine') "+
+							"}", installDir, installDir, installDir, installDir)
+
+					psCmd := exec.Command("powershell", "-Command", removeFromPathCmd)
+					if err := sudoSession.RunWithPrivileges(psCmd.Path, psCmd.Args[1:]...); err != nil {
+						fmt.Println("Warning: Failed to remove from PATH automatically.")
+						fmt.Printf("Please remove %s from your PATH manually if needed.\n", installDir)
+					}
 				}
 
-				fmt.Println("Uninstallation successful!")
-			case "windows":
-				// Remove the binary
-				if err := os.Remove(installPath); err != nil {
-					return fmt.Errorf("failed to remove binary: %w", err)
+				fmt.Println("System-wide installation removed successfully!")
+			}
+
+			// Remove GOPATH installation if exists
+			if gopathInstalled {
+				fmt.Printf("Removing GOPATH installation from %s\n", gopathVersion)
+				if err := os.Remove(gopathVersion); err != nil {
+					return fmt.Errorf("failed to remove GOPATH binary: %w", err)
 				}
+				fmt.Println("GOPATH installation removed successfully!")
+			}
 
-				// Try to remove the directory if it's empty
-				if err := os.Remove(installDir); err != nil {
-					// It's okay if the directory can't be removed (might not be empty)
-					fmt.Printf("Note: Could not remove directory %s. It may not be empty.\n", installDir)
-				}
-
-				// Remove from PATH using PowerShell
-				removeFromPathCmd := fmt.Sprintf(
-					"$currentPath = [Environment]::GetEnvironmentVariable('Path', 'Machine'); "+
-						"if ($currentPath -like '*%s*') { "+
-						"$newPath = $currentPath -replace '%s;', '' -replace ';%s', '' -replace '%s'; "+
-						"[Environment]::SetEnvironmentVariable('Path', $newPath, 'Machine') "+
-						"}", installDir, installDir, installDir, installDir)
-
-				psCmd := exec.Command("powershell", "-Command", removeFromPathCmd)
-				if err := sudoSession.RunWithPrivileges(psCmd.Path, psCmd.Args[1:]...); err != nil {
-					fmt.Println("Warning: Failed to remove from PATH automatically.")
-					fmt.Printf("Please remove %s from your PATH manually if needed.\n", installDir)
-				}
-
-				fmt.Println("Uninstallation successful!")
+			if runtime.GOOS == "windows" {
 				fmt.Println("You may need to restart your terminal or system for the PATH changes to take effect.")
 			}
 
