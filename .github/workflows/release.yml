@@ -32,25 +32,23 @@ jobs:
           cd bin
           sha256sum gateshift-linux-amd64 gateshift-linux-arm64 gateshift-darwin-amd64 gateshift-darwin-arm64 gateshift-windows-amd64.exe > checksums.txt
           cat checksums.txt
-          {
-            echo "CHECKSUMS<<ENDOFCHECKSUMS"
-            cat checksums.txt
-            echo "ENDOFCHECKSUMS"
-          } >> $GITHUB_ENV
+          echo 'CHECKSUMS<<EOF' >> $GITHUB_ENV
+          cat checksums.txt >> $GITHUB_ENV
+          echo 'EOF' >> $GITHUB_ENV
 
       - name: Generate changelog
-        id: changelog
         run: |
-          {
-            echo "CHANGELOG<<ENDOFCHANGELOG"
-            # Handle both first release and subsequent releases
-            if git describe --tags --abbrev=0 HEAD^ 2>/dev/null; then
-              git log $(git describe --tags --abbrev=0 HEAD^)..HEAD --pretty=format:'* %s'
-            else
-              git log --pretty=format:'* %s'
-            fi
-            echo "ENDOFCHANGELOG"
-          } >> $GITHUB_ENV
+          # Save commit messages to a temporary file
+          if git describe --tags --abbrev=0 HEAD^ 2>/dev/null; then
+            git log $(git describe --tags --abbrev=0 HEAD^)..HEAD --pretty=format:'* %s' > /tmp/changelog.txt
+          else
+            git log --pretty=format:'* %s' > /tmp/changelog.txt
+          fi
+          
+          # Set multiline environment variable
+          echo 'CHANGELOG<<EOF' >> $GITHUB_ENV
+          cat /tmp/changelog.txt >> $GITHUB_ENV
+          echo 'EOF' >> $GITHUB_ENV
 
       - name: Create Release
         id: create_release
