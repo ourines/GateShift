@@ -11,8 +11,17 @@ import (
 
 // Config holds all configuration for the application
 type Config struct {
-	ProxyGateway   string `mapstructure:"proxy_gateway"`
-	DefaultGateway string `mapstructure:"default_gateway"`
+	ProxyGateway   string    `mapstructure:"proxy_gateway"`
+	DefaultGateway string    `mapstructure:"default_gateway"`
+	DNS            DNSConfig `mapstructure:"dns"`
+}
+
+// DNSConfig holds DNS proxy configuration
+type DNSConfig struct {
+	Enabled     bool     `mapstructure:"enabled"`
+	ListenAddr  string   `mapstructure:"listen_addr"`
+	ListenPort  int      `mapstructure:"listen_port"`
+	UpstreamDNS []string `mapstructure:"upstream_dns"`
 }
 
 // Validate checks if the configuration is valid
@@ -63,6 +72,10 @@ func LoadConfig() (*Config, error) {
 	// Set defaults
 	viper.SetDefault("proxy_gateway", "192.168.31.100")
 	viper.SetDefault("default_gateway", "192.168.31.1")
+	viper.SetDefault("dns.enabled", false)
+	viper.SetDefault("dns.listen_addr", "127.0.0.1")
+	viper.SetDefault("dns.listen_port", 53)
+	viper.SetDefault("dns.upstream_dns", []string{"1.1.1.1:53", "8.8.8.8:53"})
 
 	// Try to read config file
 	if err := viper.ReadInConfig(); err != nil {
@@ -100,6 +113,10 @@ func SaveConfig(config *Config) error {
 
 	viper.Set("proxy_gateway", config.ProxyGateway)
 	viper.Set("default_gateway", config.DefaultGateway)
+	viper.Set("dns.enabled", config.DNS.Enabled)
+	viper.Set("dns.listen_addr", config.DNS.ListenAddr)
+	viper.Set("dns.listen_port", config.DNS.ListenPort)
+	viper.Set("dns.upstream_dns", config.DNS.UpstreamDNS)
 
 	// 如果配置文件不存在，使用 SafeWriteConfigAs
 	configFile := viper.ConfigFileUsed()
@@ -109,4 +126,26 @@ func SaveConfig(config *Config) error {
 	}
 
 	return viper.WriteConfig()
+}
+
+// ResetToDefaults resets all configuration to default values
+func ResetToDefaults() (*Config, error) {
+	// Create a new default config
+	config := &Config{
+		ProxyGateway:   "192.168.31.100",
+		DefaultGateway: "192.168.31.1",
+		DNS: DNSConfig{
+			Enabled:     false,
+			ListenAddr:  "127.0.0.1",
+			ListenPort:  53,
+			UpstreamDNS: []string{"1.1.1.1:53", "8.8.8.8:53"},
+		},
+	}
+
+	// Save the default config
+	if err := SaveConfig(config); err != nil {
+		return nil, fmt.Errorf("failed to save default configuration: %w", err)
+	}
+
+	return config, nil
 }
