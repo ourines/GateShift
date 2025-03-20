@@ -27,6 +27,10 @@ var (
 		Long: `GateShift is a cross-platform tool for switching between gateway configurations.
 It allows you to easily switch between your default gateway and a proxy gateway.`,
 	}
+
+	// Cloudflare URLs for IP lookup
+	cloudflareURL     = "https://1.1.1.1/cdn-cgi/trace"
+	cloudflareIPv6URL = "https://[2606:4700:4700::1111]/cdn-cgi/trace"
 )
 
 func init() {
@@ -192,7 +196,7 @@ func statusCmd() *cobra.Command {
 // getPublicIP 通过 Cloudflare 获取公网 IPv4 地址
 func getPublicIP() (string, error) {
 	client := &http.Client{Timeout: 5 * time.Second}
-	req, err := http.NewRequest("GET", "https://1.1.1.1/cdn-cgi/trace", nil)
+	req, err := http.NewRequest("GET", cloudflareURL, nil)
 	if err != nil {
 		return "", err
 	}
@@ -221,7 +225,7 @@ func getPublicIP() (string, error) {
 // getPublicIPv6 通过 Cloudflare 获取公网 IPv6 地址
 func getPublicIPv6() (string, error) {
 	client := &http.Client{Timeout: 5 * time.Second}
-	req, err := http.NewRequest("GET", "https://[2606:4700:4700::1111]/cdn-cgi/trace", nil)
+	req, err := http.NewRequest("GET", cloudflareIPv6URL, nil)
 	if err != nil {
 		return "", err
 	}

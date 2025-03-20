@@ -303,3 +303,35 @@ func CheckInternetConnectivity() bool {
 	cmd := exec.Command("ping", "-c", "1", "-W", "1", "8.8.8.8")
 	return cmd.Run() == nil
 }
+
+// String returns a string representation of the NetworkInterface
+func (n *NetworkInterface) String() string {
+	return fmt.Sprintf("Interface: %s (%s)\nIP: %s\nSubnet: %s\nGateway: %s",
+		n.Name, n.ServiceName, n.IP, n.Subnet, n.Gateway)
+}
+
+// IsPrivateIP checks if an IP address is private
+func IsPrivateIP(ip net.IP) bool {
+	if ip == nil {
+		return false
+	}
+
+	// Check if IPv4
+	if ip4 := ip.To4(); ip4 != nil {
+		// Following RFC 1918
+		// 10.0.0.0/8
+		if ip4[0] == 10 {
+			return true
+		}
+		// 172.16.0.0/12
+		if ip4[0] == 172 && ip4[1] >= 16 && ip4[1] <= 31 {
+			return true
+		}
+		// 192.168.0.0/16
+		if ip4[0] == 192 && ip4[1] == 168 {
+			return true
+		}
+	}
+
+	return false
+}

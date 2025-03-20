@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 
@@ -14,21 +15,46 @@ type Config struct {
 	DefaultGateway string `mapstructure:"default_gateway"`
 }
 
-// LoadConfig loads the configuration from file or creates default one if it doesn't exist
-func LoadConfig() (*Config, error) {
-	// Get home directory
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return nil, fmt.Errorf("could not get home directory: %w", err)
+// Validate checks if the configuration is valid
+func (c *Config) Validate() error {
+	if c.DefaultGateway == "" {
+		return fmt.Errorf("default gateway is required")
+	}
+	if c.ProxyGateway == "" {
+		return fmt.Errorf("proxy gateway is required")
 	}
 
-	// Create config directory if it doesn't exist
-	configDir := filepath.Join(home, ".gateshift")
+	// 验证 IP 地址格式
+	if net.ParseIP(c.DefaultGateway) == nil {
+		return fmt.Errorf("invalid default gateway IP address: %s", c.DefaultGateway)
+	}
+	if net.ParseIP(c.ProxyGateway) == nil {
+		return fmt.Errorf("invalid proxy gateway IP address: %s", c.ProxyGateway)
+	}
+
+	return nil
+}
+
+// GetConfigDir returns the path to the configuration directory
+func GetConfigDir() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		home = os.Getenv("HOME")
+	}
+	return filepath.Join(home, ".gateshift")
+}
+
+// GetDefaultConfigPath returns the path to the default configuration file
+func GetDefaultConfigPath() string {
+	return filepath.Join(GetConfigDir(), "config.yaml")
+}
+
+// LoadConfig loads the configuration from file or creates default one if it doesn't exist
+func LoadConfig() (*Config, error) {
+	configDir := GetConfigDir()
 	if err := os.MkdirAll(configDir, 0755); err != nil {
 		return nil, fmt.Errorf("could not create config directory: %w", err)
 	}
-
-	configFile := filepath.Join(configDir, "config")
 
 	viper.SetConfigName("config")
 	viper.SetConfigType("yaml")
@@ -42,7 +68,8 @@ func LoadConfig() (*Config, error) {
 	if err := viper.ReadInConfig(); err != nil {
 		// If config file doesn't exist, create it with defaults
 		if _, ok := err.(viper.ConfigFileNotFoundError); ok {
-			if err := viper.SafeWriteConfigAs(configFile + ".yaml"); err != nil {
+			configFile := filepath.Join(configDir, "config.yaml")
+			if err := viper.SafeWriteConfigAs(configFile); err != nil {
 				return nil, fmt.Errorf("could not write default config: %w", err)
 			}
 		} else {
@@ -60,8 +87,26 @@ func LoadConfig() (*Config, error) {
 
 // SaveConfig saves the configuration to file
 func SaveConfig(config *Config) error {
+	// 验证配置
+	if err := config.Validate(); err != nil {
+		return fmt.Errorf("invalid configuration: %w", err)
+	}
+
+	// 确保配置目录存在
+	configDir := GetConfigDir()
+	if err := os.MkdirAll(configDir, 0755); err != nil {
+		return fmt.Errorf("could not create config directory: %w", err)
+	}
+
 	viper.Set("proxy_gateway", config.ProxyGateway)
 	viper.Set("default_gateway", config.DefaultGateway)
+
+	// 如果配置文件不存在，使用 SafeWriteConfigAs
+	configFile := viper.ConfigFileUsed()
+	if configFile == "" {
+		configFile = filepath.Join(configDir, "config.yaml")
+		return viper.SafeWriteConfigAs(configFile)
+	}
 
 	return viper.WriteConfig()
 }
