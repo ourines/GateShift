@@ -43,23 +43,26 @@ jobs:
           cd bin
           sha256sum gateshift-linux-amd64 gateshift-linux-arm64 gateshift-darwin-amd64 gateshift-darwin-arm64 gateshift-windows-amd64.exe > checksums.txt
           cat checksums.txt
-          echo 'CHECKSUMS<<EOF' >> $GITHUB_ENV
-          cat checksums.txt >> $GITHUB_ENV
-          echo 'EOF' >> $GITHUB_ENV
+      
+      - name: Set checksums
+        id: set_checksums
+        run: |
+          CHECKSUMS="$(cat bin/checksums.txt)"
+          echo "checksums=$CHECKSUMS" >> $GITHUB_OUTPUT
 
       - name: Generate changelog
+        id: changelog
         run: |
-          # Save commit messages to a temporary file
+          # Generate changelog and save output
           if git describe --tags --abbrev=0 HEAD^ 2>/dev/null; then
-            git log $(git describe --tags --abbrev=0 HEAD^)..HEAD --pretty=format:'* %s' > /tmp/changelog.txt
+            CHANGELOG=$(git log $(git describe --tags --abbrev=0 HEAD^)..HEAD --pretty=format:'* %s')
           else
-            git log --pretty=format:'* %s' > /tmp/changelog.txt
+            CHANGELOG=$(git log --pretty=format:'* %s')
           fi
-          
-          # Set multiline environment variable
-          echo 'CHANGELOG<<EOF' >> $GITHUB_ENV
-          cat /tmp/changelog.txt >> $GITHUB_ENV
-          echo 'EOF' >> $GITHUB_ENV
+          # Output changelog safely
+          echo "changelog<<EOL" >> $GITHUB_OUTPUT
+          echo "$CHANGELOG" >> $GITHUB_OUTPUT
+          echo "EOL" >> $GITHUB_OUTPUT
 
       - name: Create Release
         id: create_release
@@ -71,11 +74,11 @@ jobs:
           prerelease: false
           body: |
             ## Changelog
-            ${{ env.CHANGELOG }}
+            ${{ steps.changelog.outputs.changelog }}
             
             ## SHA256 Checksums
             ```
-            ${{ env.CHECKSUMS }}
+            ${{ steps.set_checksums.outputs.checksums }}
             ```
           files: |
             bin/gateshift-linux-amd64
