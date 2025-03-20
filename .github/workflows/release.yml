@@ -30,7 +30,7 @@ jobs:
       - name: Generate checksums
         run: |
           cd bin
-          sha256sum proxy_linux_amd64 proxy_linux_arm64 proxy_darwin_amd64 proxy_darwin_arm64 proxy_windows_amd64.exe > checksums.txt
+          sha256sum gateshift-linux-amd64 gateshift-linux-arm64 gateshift-darwin-amd64 gateshift-darwin-arm64 gateshift-windows-amd64.exe > checksums.txt
           cat checksums.txt
           echo "CHECKSUMS<<EOF" >> $GITHUB_ENV
           cat checksums.txt >> $GITHUB_ENV
@@ -64,11 +64,11 @@ jobs:
             ${{ env.CHECKSUMS }}
             ```
           files: |
-            bin/proxy_linux_amd64
-            bin/proxy_linux_arm64
-            bin/proxy_darwin_amd64
-            bin/proxy_darwin_arm64
-            bin/proxy_windows_amd64.exe
+            bin/gateshift-linux-amd64
+            bin/gateshift-linux-arm64
+            bin/gateshift-darwin-amd64
+            bin/gateshift-darwin-arm64
+            bin/gateshift-windows-amd64.exe
             bin/checksums.txt
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} 

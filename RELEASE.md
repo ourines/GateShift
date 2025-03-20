@@ -26,9 +26,9 @@ This project uses GitHub Actions to automatically build and publish releases.
 ## Supported Platforms
 
 The automated build process creates binaries for:
-- Linux (amd64, arm64)
-- macOS (amd64, arm64)
-- Windows (amd64)
+- Linux (amd64, arm64): `gateshift-linux-amd64`, `gateshift-linux-arm64`
+- macOS (amd64, arm64): `gateshift-darwin-amd64`, `gateshift-darwin-arm64`
+- Windows (amd64): `gateshift-windows-amd64.exe`
 
 ## Manually Testing Before Release
 
