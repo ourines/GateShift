@@ -12,6 +12,9 @@ import (
 	"github.com/ourines/GateShift/internal/utils"
 )
 
+// Mock command executor for testing
+var execCommand = exec.Command
+
 // NetworkInterface represents information about a network interface
 type NetworkInterface struct {
 	Name        string
