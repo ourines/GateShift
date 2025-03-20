@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/user/proxy/internal/utils"
+	"github.com/ourines/GateShift/internal/utils"
 )
 
 // NetworkInterface represents information about a network interface

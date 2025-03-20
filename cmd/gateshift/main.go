@@ -10,9 +10,9 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/user/proxy/internal/gateway"
-	"github.com/user/proxy/internal/utils"
-	"github.com/user/proxy/pkg/config"
+	"github.com/ourines/GateShift/internal/gateway"
+	"github.com/ourines/GateShift/internal/utils"
+	"github.com/ourines/GateShift/pkg/config"
 )
 
 var (
