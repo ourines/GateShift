@@ -17,6 +17,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
 
       - name: Set up Go
         uses: actions/setup-go@v4
@@ -30,4 +32,11 @@ jobs:
       - name: Test build success
         run: |
           ls -la bin/
-          echo "Build completed successfully!" 
+          echo "Build completed successfully!"
+          
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: gateshift-dev-binaries
+          path: bin/
+          retention-days: 3 
