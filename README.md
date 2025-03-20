@@ -27,7 +27,7 @@ GateShift是一个专为OpenWrt旁路由设计的网关切换工具，让用户�
 如果您已安装 Go 1.18 或更高版本：
 
 ```bash
-go install github.com/ourines/GateShift@latest
+go install github.com/ourines/GateShift/cmd/gateshift@latest
 ```
 
 ### 方法二：使用快速安装脚本
