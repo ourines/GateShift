@@ -220,7 +220,7 @@ func installCmd() *cobra.Command {
 				return fmt.Errorf("unsupported operating system: %s", runtime.GOOS)
 			}
 
-			fmt.Printf("Installing proxy to %s\n", installPath)
+			fmt.Printf("Installing GateShift to %s\n", installPath)
 
 			// Create installation directory if it doesn't exist
 			if err := os.MkdirAll(installDir, 0755); err != nil {
@@ -240,7 +240,7 @@ func installCmd() *cobra.Command {
 				}
 
 				fmt.Println("Installation successful!")
-				fmt.Println("You can now run 'proxy' from anywhere in your terminal.")
+				fmt.Println("You can now run 'gateshift' from anywhere in your terminal.")
 			case "windows":
 				// On Windows, we'll create a copy and add to PATH
 				if err := os.MkdirAll(installDir, 0755); err != nil {
@@ -272,7 +272,7 @@ func installCmd() *cobra.Command {
 
 				fmt.Println("Installation successful!")
 				fmt.Println("You may need to restart your terminal or system for the PATH changes to take effect.")
-				fmt.Println("After that, you can run 'proxy' from anywhere in your terminal.")
+				fmt.Println("After that, you can run 'gateshift' from anywhere in your terminal.")
 			}
 
 			return nil
