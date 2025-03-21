@@ -2,7 +2,6 @@
 
 ![License](https://img.shields.io/github/license/ourines/GateShift)
 ![GitHub release (latest by date)](https://img.shields.io/github/v/release/ourines/GateShift)
-[![codecov](https://codecov.io/gh/ourines/GateShift/branch/main/graph/badge.svg)](https://codecov.io/gh/ourines/GateShift)
 
 GateShift是一个专为OpenWrt旁路由设计的网关切换工具，让用户能够在默认网关和代理网关之间无缝切换网络流量路径，特别适合需要在普通上网和科学上网之间灵活切换的场景。
 
