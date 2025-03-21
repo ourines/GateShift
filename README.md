@@ -101,9 +101,9 @@ gateshift uninstall
 
 # DNS 功能（独立于网关切换）
 gateshift dns start                        # 启动 DNS 服务用于防止 DNS 泄露
-gateshift dns set-port 5353                # 设置 DNS 监听端口
-gateshift dns set-address 127.0.0.1        # 设置 DNS 监听地址
-gateshift dns set-upstream 1.1.1.1 8.8.8.8 9.9.9.9  # 设置上游 DNS 服务器
+gateshift dns add-server 1.1.1.1           # 添加上游DNS服务器
+gateshift dns remove-server 8.8.8.8        # 移除指定的上游DNS服务器
+gateshift dns list-servers                 # 列出所有配置的上游DNS服务器
 gateshift dns show                         # 显示 DNS 配置
 gateshift dns start -f                     # 在前台启动 DNS 服务
 gateshift dns restart                      # 重启 DNS 服务
@@ -159,22 +159,10 @@ GateShift提供了两种DNS服务运行模式，以适应不同场景的需求�
 ### DNS配置管理
 
 ```bash
-# 设置DNS监听地址和端口
-gateshift dns set-address 127.0.0.1  # 默认监听本地
-gateshift dns set-port 53            # 默认使用53端口
-
-# 如果遇到53端口权限问题，可以设置为更高端口号
-gateshift dns set-port 10053         # 使用非特权端口
-
-# macOS 用户特别说明
-# macOS 系统不支持通过系统设置指定 DNS 端口，如果使用非标准端口（非53），有以下选项：
-# 1. 单独为应用程序配置 DNS 服务器，指定 IP:端口
-# 2. 使用 sudo 权限在标准端口 53 上运行：sudo gateshift dns set-port 53
-# 3. 配置本地解析器转发到指定端口的 DNS 服务
-
-# 配置上游DNS服务器（可设置多个）
-gateshift dns set-upstream 1.1.1.1 8.8.8.8 9.9.9.9
-# 系统会自动添加":53"端口号
+# 配置上游DNS服务器
+gateshift dns add-server 1.1.1.1           # 添加单个上游DNS服务器（自动添加":53"端口号）
+gateshift dns remove-server 8.8.8.8        # 移除指定的上游DNS服务器
+gateshift dns list-servers                 # 列出所有配置的上游DNS服务器
 
 # 查看当前DNS配置和运行状态
 gateshift dns show
@@ -184,9 +172,8 @@ gateshift dns show
 
 ```bash
 # 启动DNS服务
-sudo gateshift dns start          # 启动后台服务（监听53端口需要sudo权限）
+sudo gateshift dns start          # 启动后台服务（需要sudo权限）
 sudo gateshift dns start -f       # 前台运行（按Ctrl+C停止）
-gateshift dns start -f            # 使用非特权端口（如10053）则无需sudo
 
 # 停止DNS服务
 sudo gateshift dns stop

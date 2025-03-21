@@ -99,9 +99,9 @@ gateshift uninstall
 
 # DNS features (independent of gateway switching)
 gateshift dns start                        # Start DNS service for DNS leak protection
-gateshift dns set-port 5353                # Set DNS listening port
-gateshift dns set-address 127.0.0.1        # Set DNS listening address
-gateshift dns set-upstream 1.1.1.1 8.8.8.8 9.9.9.9  # Set upstream DNS servers
+gateshift dns add-server 1.1.1.1           # Add an upstream DNS server
+gateshift dns remove-server 8.8.8.8        # Remove a specific upstream DNS server
+gateshift dns list-servers                 # List all configured upstream DNS servers
 gateshift dns show                         # Show DNS configuration
 gateshift dns start -f                     # Start DNS service in foreground
 gateshift dns restart                      # Restart DNS service
@@ -167,22 +167,10 @@ Note: DNS services typically require administrator/root privileges as they need 
 ### DNS Configuration Management
 
 ```bash
-# Set DNS listening address and port
-gateshift dns set-address 127.0.0.1  # Default listens on localhost
-gateshift dns set-port 53            # Default uses port 53
-
-# If you encounter port 53 permission issues, you can set a higher port number
-gateshift dns set-port 10053         # Use a non-privileged port
-
-# Special note for macOS users
-# macOS does not support specifying DNS ports through system settings. If using a non-standard port (not 53), you have these options:
-# 1. Configure individual applications to use the DNS server with IP:port
-# 2. Use sudo to run on standard port 53: sudo gateshift dns set-port 53
-# 3. Configure a local resolver that forwards to the specified port
-
-# Configure upstream DNS servers (multiple can be set)
-gateshift dns set-upstream 1.1.1.1 8.8.8.8 9.9.9.9
-# System will automatically add ":53" port suffix if not present
+# Configure upstream DNS servers
+gateshift dns add-server 1.1.1.1           # Add a single upstream DNS server (":53" port suffix added automatically)
+gateshift dns remove-server 8.8.8.8        # Remove a specific upstream DNS server
+gateshift dns list-servers                 # List all configured upstream DNS servers
 
 # View current DNS configuration and running status
 gateshift dns show
@@ -192,9 +180,8 @@ gateshift dns show
 
 ```bash
 # Start DNS service
-sudo gateshift dns start          # Start background service (sudo required for port 53)
+sudo gateshift dns start          # Start background service (sudo required)
 sudo gateshift dns start -f       # Run in foreground (press Ctrl+C to stop)
-gateshift dns start -f            # No sudo needed when using non-privileged ports (like 10053)
 
 # Stop DNS service
 sudo gateshift dns stop
