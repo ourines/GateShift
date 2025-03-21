@@ -832,8 +832,6 @@ var dnsCmd = &cobra.Command{
 }
 
 func init() {
-	rootCmd.AddCommand(dnsCmd)
-
 	// show command
 	var showCmd = &cobra.Command{
 		Use:   "show",
@@ -859,6 +857,88 @@ func init() {
 		},
 	}
 	dnsCmd.AddCommand(showCmd)
+
+	// logs command
+	var follow bool
+	var lines int
+	var filterText string
+	var logsCmd = &cobra.Command{
+		Use:   "logs",
+		Short: "View DNS service logs",
+		Long:  `View and filter logs from the DNS proxy service.`,
+		Run: func(cmd *cobra.Command, args []string) {
+			// 获取日志文件路径
+			homeDir, err := os.UserHomeDir()
+			if err != nil {
+				fmt.Println("Error finding home directory:", err)
+				return
+			}
+			logFile := filepath.Join(homeDir, ".gateshift", "logs", "gateshift-dns.log")
+
+			// 检查日志文件是否存在
+			if _, err := os.Stat(logFile); os.IsNotExist(err) {
+				fmt.Println("Log file not found. Has the DNS service been started?")
+				return
+			}
+
+			// 构建命令
+			var cmdArgs []string
+			if follow {
+				// 使用tail -f实时查看日志
+				cmdArgs = append(cmdArgs, "-f")
+			}
+
+			// 指定行数
+			cmdArgs = append(cmdArgs, "-n", fmt.Sprintf("%d", lines))
+			cmdArgs = append(cmdArgs, logFile)
+
+			if filterText != "" {
+				// 如果有过滤条件，使用grep过滤
+				tailCmd := exec.Command("tail", cmdArgs...)
+				grepCmd := exec.Command("grep", "-i", filterText)
+
+				// 连接两个命令的标准输入/输出
+				pipe, err := tailCmd.StdoutPipe()
+				if err != nil {
+					fmt.Println("Error setting up command:", err)
+					return
+				}
+				grepCmd.Stdin = pipe
+				grepCmd.Stdout = os.Stdout
+				grepCmd.Stderr = os.Stderr
+
+				// 启动命令
+				if err := grepCmd.Start(); err != nil {
+					fmt.Println("Error starting grep command:", err)
+					return
+				}
+				if err := tailCmd.Run(); err != nil {
+					if !follow { // 如果非follow模式，tail可能正常结束，不视为错误
+						fmt.Println("Error running tail command:", err)
+					}
+				}
+				grepCmd.Wait()
+			} else {
+				// 直接使用tail命令
+				execCmd := exec.Command("tail", cmdArgs...)
+				execCmd.Stdout = os.Stdout
+				execCmd.Stderr = os.Stderr
+
+				if err := execCmd.Run(); err != nil {
+					if !follow { // 同上
+						fmt.Println("Error viewing logs:", err)
+					}
+				}
+			}
+		},
+	}
+
+	// 添加flags
+	logsCmd.Flags().BoolVarP(&follow, "follow", "f", false, "Follow log output in real-time")
+	logsCmd.Flags().IntVarP(&lines, "lines", "n", 50, "Number of lines to show")
+	logsCmd.Flags().StringVarP(&filterText, "filter", "F", "", "Filter logs containing the specified text (case insensitive)")
+
+	dnsCmd.AddCommand(logsCmd)
 
 	// start command
 	var startForeground bool
