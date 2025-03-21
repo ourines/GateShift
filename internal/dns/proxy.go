@@ -11,7 +11,6 @@ import (
 // DNSProxy represents a DNS proxy server
 type DNSProxy struct {
 	listenAddr  string
-	listenPort  int
 	upstreamDNS []string
 	conn        *net.UDPConn
 	running     bool
@@ -20,10 +19,9 @@ type DNSProxy struct {
 }
 
 // NewDNSProxy creates a new DNS proxy
-func NewDNSProxy(listenAddr string, listenPort int, upstreamDNS []string) (*DNSProxy, error) {
+func NewDNSProxy(listenAddr string, upstreamDNS []string) (*DNSProxy, error) {
 	return &DNSProxy{
 		listenAddr:  listenAddr,
-		listenPort:  listenPort,
 		upstreamDNS: upstreamDNS,
 		running:     false,
 		stopChan:    make(chan struct{}),
@@ -39,8 +37,11 @@ func (p *DNSProxy) Start() error {
 		return fmt.Errorf("DNS proxy is already running")
 	}
 
+	// 固定使用53端口
+	const port = 53
+
 	// Bind UDP port
-	addr := fmt.Sprintf("%s:%d", p.listenAddr, p.listenPort)
+	addr := fmt.Sprintf("%s:%d", p.listenAddr, port)
 	log.Printf("Attempting to bind to %s", addr)
 
 	udpAddr, err := net.ResolveUDPAddr("udp", addr)
@@ -59,7 +60,7 @@ func (p *DNSProxy) Start() error {
 	go p.handleRequests()
 
 	p.running = true
-	log.Printf("DNS proxy started on %s:%d", p.listenAddr, p.listenPort)
+	log.Printf("DNS proxy started on %s", addr)
 	log.Printf("Using upstream DNS servers: %v", p.upstreamDNS)
 	return nil
 }
@@ -95,7 +96,7 @@ func (p *DNSProxy) IsRunning() bool {
 func (p *DNSProxy) GetPort() int {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	return p.listenPort
+	return 53
 }
 
 // handleRequests handles incoming DNS requests

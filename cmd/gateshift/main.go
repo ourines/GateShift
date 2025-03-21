@@ -4,15 +4,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
 	"net"
 	"net/http"
 	"os"
 	"os/exec"
-	"os/signal"
 	"path/filepath"
 	"runtime"
-	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -40,9 +37,33 @@ It allows you to easily switch between your default gateway and a proxy gateway.
 
 	// Global DNS proxy instance
 	dnsProxy *dns.DNSProxy
+
+	// PID file paths
+	DNSPIDFile string
 )
 
 func init() {
+	// 获取用户主目录
+	homeDir, err := os.UserHomeDir()
+	if err == nil {
+		// 创建程序数据目录
+		dataDir := filepath.Join(homeDir, ".gateshift")
+		if _, err := os.Stat(dataDir); os.IsNotExist(err) {
+			os.MkdirAll(dataDir, 0755)
+		}
+
+		// 设置PID文件路径
+		DNSPIDFile = filepath.Join(dataDir, "dns.pid")
+	}
+
+	// Cobra 初始化前检查是否有配置文件路径参数
+	for i, arg := range os.Args {
+		if arg == "--config" && i+1 < len(os.Args) {
+			cfgFile = os.Args[i+1]
+			break
+		}
+	}
+
 	// Add commands
 	rootCmd.AddCommand(proxyCmd())
 	rootCmd.AddCommand(defaultCmd())
@@ -52,7 +73,7 @@ func init() {
 	rootCmd.AddCommand(installCmd())
 	rootCmd.AddCommand(uninstallCmd())
 	rootCmd.AddCommand(upgradeCmd())
-	rootCmd.AddCommand(dnsCmd())
+	rootCmd.AddCommand(dnsCmd)
 
 	// Add flags
 	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default is $HOME/.gateshift/config.yaml)")
@@ -198,7 +219,6 @@ func configCmd() *cobra.Command {
 			fmt.Printf("Proxy Gateway: %s\n", cfg.ProxyGateway)
 			fmt.Printf("Default Gateway: %s\n", cfg.DefaultGateway)
 			fmt.Printf("DNS Listen Address: %s\n", cfg.DNS.ListenAddr)
-			fmt.Printf("DNS Listen Port: %d\n", cfg.DNS.ListenPort)
 			fmt.Printf("DNS Upstream Servers: %v\n", cfg.DNS.UpstreamDNS)
 
 			// Stop DNS proxy if it's running
@@ -271,7 +291,7 @@ func statusCmd() *cobra.Command {
 				running := isServiceRunning()
 				if running || (dnsProxy != nil && dnsProxy.IsRunning()) {
 					fmt.Printf("  Status: Running\n")
-					fmt.Printf("  Listen Address: %s:%d\n", cfg.DNS.ListenAddr, cfg.DNS.ListenPort)
+					fmt.Printf("  Listen Address: %s\n", cfg.DNS.ListenAddr)
 					fmt.Printf("  Upstream DNS: %v\n", cfg.DNS.UpstreamDNS)
 				} else {
 					fmt.Printf("  Status: Stopped\n")
@@ -801,529 +821,421 @@ func switchGateway(newGateway string) error {
 	return nil
 }
 
-func dnsCmd() *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "dns",
-		Short: "Manage DNS settings",
-		Long:  `Commands for viewing and configuring DNS settings.`,
-	}
+// dnsCmd represents the dns command
+var dnsCmd = &cobra.Command{
+	Use:   "dns",
+	Short: "Manage DNS proxy service",
+	Long:  `This command is used to manage the DNS proxy service, which can intercept DNS requests and forward them to upstream DNS servers.`,
+	Run: func(cmd *cobra.Command, args []string) {
+		cmd.Help()
+	},
+}
 
-	// 启动DNS服务
-	startDNS := &cobra.Command{
-		Use:   "start",
-		Short: "Start the DNS proxy service",
-		Long:  `Start the DNS proxy service.`,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			// 读取配置
-			cfg, err := config.LoadConfig()
-			if err != nil {
-				return fmt.Errorf("failed to load configuration: %w", err)
-			}
+func init() {
+	rootCmd.AddCommand(dnsCmd)
 
-			// 检查服务是否已经在运行
-			if isServiceRunning() {
-				fmt.Println("DNS service is already running.")
-				return nil
-			}
-
-			// 是否保持在前台运行
-			keepForeground, _ := cmd.Flags().GetBool("foreground")
-
-			// 如果需要在后台运行
-			if !keepForeground {
-				fmt.Println("Starting DNS service in the background...")
-
-				// 获取当前二进制文件的路径
-				ex, err := os.Executable()
-				if err != nil {
-					return fmt.Errorf("failed to get executable path: %w", err)
-				}
-
-				// 设置命令行参数
-				args := []string{"dns", "start", "--foreground"}
-
-				// 创建一个新的进程
-				attr := &os.ProcAttr{
-					Files: []*os.File{nil, nil, nil}, // 标准输入、输出和错误重定向到 /dev/null
-				}
-
-				// 启动新进程
-				process, err := os.StartProcess(ex, append([]string{ex}, args...), attr)
-				if err != nil {
-					return fmt.Errorf("failed to start daemon process: %w", err)
-				}
-
-				// 进程独立运行
-				err = process.Release()
-				if err != nil {
-					return fmt.Errorf("failed to release daemon process: %w", err)
-				}
-
-				fmt.Println("DNS service started successfully in the background")
-				return nil
-			}
-
-			// 如果是前台运行，或者是从后台启动的子进程
-
-			// 获取用户主目录，用于存放日志文件
-			homeDir, err := os.UserHomeDir()
-			if err != nil {
-				return fmt.Errorf("failed to get home directory: %w", err)
-			}
-
-			// 创建日志目录
-			logDir := filepath.Join(homeDir, ".gateshift", "logs")
-			if err := os.MkdirAll(logDir, 0755); err != nil {
-				return fmt.Errorf("failed to create log directory: %w", err)
-			}
-
-			// 日志文件路径
-			logFilePath := filepath.Join(logDir, "gateshift-dns.log")
-
-			// 创建日志文件
-			logFile, err := os.OpenFile(logFilePath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
-			if err != nil {
-				return fmt.Errorf("failed to open log file: %w", err)
-			}
-			defer logFile.Close()
-
-			// 设置日志输出到文件（保持一份到终端）
-			if keepForeground {
-				// 如果是前台运行，同时输出到终端和日志文件
-				log.SetOutput(io.MultiWriter(os.Stdout, logFile))
-			} else {
-				// 如果是后台运行，只输出到日志文件
-				log.SetOutput(logFile)
-			}
-
-			log.Printf("DNS service started at %s", time.Now().Format(time.RFC3339))
-
-			// 设置信号处理
-			sigChan := make(chan os.Signal, 1)
-			signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
-
-			// 启动 DNS 代理
-			log.Printf("Starting DNS proxy on %s:%d", cfg.DNS.ListenAddr, cfg.DNS.ListenPort)
-			dnsProxy, err = dns.NewDNSProxy(cfg.DNS.ListenAddr, cfg.DNS.ListenPort, cfg.DNS.UpstreamDNS)
-			if err != nil {
-				log.Printf("Failed to create DNS proxy: %v", err)
-				return fmt.Errorf("failed to create DNS proxy: %w", err)
-			}
-
-			// 启动 DNS 代理
-			if err := dnsProxy.Start(); err != nil {
-				log.Printf("Failed to start DNS proxy: %v", err)
-				return fmt.Errorf("failed to start DNS proxy: %w", err)
-			}
-
-			// 配置系统 DNS
-			log.Printf("Configuring system DNS to use %s:%d", cfg.DNS.ListenAddr, cfg.DNS.ListenPort)
-
-			// 非标准端口的特别提示
-			if cfg.DNS.ListenPort != 53 && runtime.GOOS == "darwin" {
-				log.Printf("Warning: Using non-standard port %d on macOS", cfg.DNS.ListenPort)
-				log.Printf("Some applications may not respect the port setting and will continue using port 53")
-			}
-
-			if err := dns.ConfigureSystemDNS(cfg.DNS.ListenAddr, cfg.DNS.ListenPort); err != nil {
-				log.Printf("Warning: Failed to configure system DNS: %v", err)
-			} else {
-				log.Printf("DNS leak protection enabled")
-			}
-
-			if keepForeground {
-				fmt.Println("DNS service running. Press Ctrl+C to stop.")
-			}
-
-			// 等待信号退出
-			sig := <-sigChan
-			log.Printf("Received signal: %v", sig)
-
-			// 停止 DNS 代理
-			if dnsProxy != nil && dnsProxy.IsRunning() {
-				log.Printf("Stopping DNS proxy...")
-				if err := dnsProxy.Stop(); err != nil {
-					log.Printf("Warning: Failed to stop DNS proxy: %v", err)
-				} else {
-					log.Printf("DNS proxy stopped")
-				}
-
-				// 恢复系统 DNS
-				if err := dns.RestoreSystemDNS(); err != nil {
-					log.Printf("Warning: Failed to restore system DNS: %v", err)
-				} else {
-					log.Printf("System DNS restored")
-				}
-			}
-
-			log.Printf("DNS service stopped at %s", time.Now().Format(time.RFC3339))
-			return nil
-		},
-	}
-
-	// 添加前台运行标志
-	startDNS.Flags().BoolP("foreground", "f", false, "Run in the foreground (don't detach)")
-
-	// 停止DNS服务
-	stopDNS := &cobra.Command{
-		Use:   "stop",
-		Short: "Stop the running DNS service",
-		Long:  `Stop the running DNS proxy service and restore system DNS settings.`,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			// 找到所有gateshift进程
-			fmt.Println("Stopping DNS service...")
-
-			// 获取当前二进制文件的路径
-			ex, err := os.Executable()
-			if err != nil {
-				return fmt.Errorf("failed to get executable path: %w", err)
-			}
-
-			// 获取所有gateshift进程
-			var command string
-			switch runtime.GOOS {
-			case "darwin", "linux":
-				command = "pgrep -f " + filepath.Base(ex)
-			case "windows":
-				command = "tasklist | findstr " + filepath.Base(ex)
-			default:
-				return fmt.Errorf("unsupported operating system: %s", runtime.GOOS)
-			}
-
-			execCmd := exec.Command("sh", "-c", command)
-			output, err := execCmd.Output()
-			if err != nil {
-				// 没有找到进程，可能已经停止
-				fmt.Println("No DNS service is running.")
-				return nil
-			}
-
-			// 解析输出，获取进程ID
-			var pids []string
-			for _, line := range strings.Split(string(output), "\n") {
-				if line == "" {
-					continue
-				}
-
-				fields := strings.Fields(line)
-				if len(fields) > 0 {
-					// 检查是否为DNS服务进程（包含 'dns start' 字样）
-					checkCmd := fmt.Sprintf("ps -p %s -o command= | grep 'dns start'", fields[0])
-					checkOutput, _ := exec.Command("sh", "-c", checkCmd).Output()
-					if len(checkOutput) > 0 {
-						pids = append(pids, fields[0])
-					}
-				}
-			}
-
-			if len(pids) == 0 {
-				fmt.Println("No DNS service found.")
-				return nil
-			}
-
-			// 发送SIGTERM信号给每个守护进程
-			for _, pid := range pids {
-				fmt.Printf("Stopping DNS service (PID: %s)...\n", pid)
-
-				// 根据操作系统执行相应的终止命令
-				var err error
-				switch runtime.GOOS {
-				case "darwin", "linux":
-					killExecCmd := exec.Command("sudo", "kill", "-SIGTERM", pid)
-					err = killExecCmd.Run()
-				case "windows":
-					killExecCmd := exec.Command("taskkill", "/F", "/PID", pid)
-					err = killExecCmd.Run()
-				}
-
-				if err != nil {
-					return fmt.Errorf("failed to stop DNS service (PID: %s): %w", pid, err)
-				}
-			}
-
-			fmt.Println("DNS service stopped successfully. System DNS settings restored.")
-			return nil
-		},
-	}
-
-	// 重启DNS服务
-	restartDNS := &cobra.Command{
-		Use:   "restart",
-		Short: "Restart the DNS proxy service",
-		Long:  `Restart the running DNS proxy service.`,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			// 先停止服务
-			stopCmd := exec.Command(os.Args[0], "dns", "stop")
-			stopCmd.Stdout = os.Stdout
-			stopCmd.Stderr = os.Stderr
-			if err := stopCmd.Run(); err != nil {
-				return fmt.Errorf("failed to stop DNS service: %w", err)
-			}
-
-			// 短暂等待以确保服务完全停止
-			time.Sleep(1 * time.Second)
-
-			// 再启动服务
-			startCmd := exec.Command(os.Args[0], "dns", "start")
-			startCmd.Stdout = os.Stdout
-			startCmd.Stderr = os.Stderr
-			if err := startCmd.Run(); err != nil {
-				return fmt.Errorf("failed to start DNS service: %w", err)
-			}
-
-			return nil
-		},
-	}
-
-	// 设置上游DNS服务器
-	setUpstream := &cobra.Command{
-		Use:   "set-upstream [dns-server-ips...]",
-		Short: "Set the upstream DNS servers",
-		Args:  cobra.MinimumNArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg, err := config.LoadConfig()
-			if err != nil {
-				return fmt.Errorf("failed to load configuration: %w", err)
-			}
-
-			// 确保每个服务器地址都有端口号
-			upstreamServers := make([]string, len(args))
-			for i, server := range args {
-				// 检查是否已包含端口号
-				if !strings.Contains(server, ":") {
-					// 默认添加端口53
-					upstreamServers[i] = server + ":53"
-				} else {
-					upstreamServers[i] = server
-				}
-			}
-
-			cfg.DNS.UpstreamDNS = upstreamServers
-			if err := config.SaveConfig(cfg); err != nil {
-				return fmt.Errorf("failed to save configuration: %w", err)
-			}
-
-			fmt.Printf("Upstream DNS servers set to: %v\n", upstreamServers)
-			fmt.Println("Restart the DNS service to apply changes: gateshift dns restart")
-			return nil
-		},
-	}
-
-	// 设置DNS代理监听地址
-	setListenAddr := &cobra.Command{
-		Use:   "set-address [ip-address]",
-		Short: "Set the DNS proxy listening address",
-		Args:  cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			// 验证输入的是有效的IP地址
-			ip := net.ParseIP(args[0])
-			if ip == nil {
-				return fmt.Errorf("invalid IP address: %s", args[0])
-			}
-
-			cfg, err := config.LoadConfig()
-			if err != nil {
-				return fmt.Errorf("failed to load configuration: %w", err)
-			}
-
-			cfg.DNS.ListenAddr = args[0]
-			if err := config.SaveConfig(cfg); err != nil {
-				return fmt.Errorf("failed to save configuration: %w", err)
-			}
-
-			fmt.Printf("DNS proxy listen address set to: %s\n", args[0])
-			fmt.Println("Restart the DNS service to apply changes: gateshift dns restart")
-			return nil
-		},
-	}
-
-	// 设置DNS代理监听端口
-	setPort := &cobra.Command{
-		Use:   "set-port [port-number]",
-		Short: "Set the DNS proxy listening port",
-		Args:  cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			port, err := strconv.Atoi(args[0])
-			if err != nil {
-				return fmt.Errorf("invalid port number: %w", err)
-			}
-
-			if port < 1 || port > 65535 {
-				return fmt.Errorf("port number must be between 1 and 65535")
-			}
-
-			cfg, err := config.LoadConfig()
-			if err != nil {
-				return fmt.Errorf("failed to load configuration: %w", err)
-			}
-
-			cfg.DNS.ListenPort = port
-			if err := config.SaveConfig(cfg); err != nil {
-				return fmt.Errorf("failed to save configuration: %w", err)
-			}
-
-			fmt.Printf("DNS proxy port set to: %d\n", port)
-			fmt.Println("Restart the DNS service to apply changes: gateshift dns restart")
-			return nil
-		},
-	}
-
-	// 显示DNS配置
-	showDNS := &cobra.Command{
+	// show command
+	var showCmd = &cobra.Command{
 		Use:   "show",
-		Short: "Show the current DNS settings",
-		RunE: func(cmd *cobra.Command, args []string) error {
+		Short: "Show DNS proxy configuration",
+		Long:  `Show the current configuration of the DNS proxy service.`,
+		Run: func(cmd *cobra.Command, args []string) {
+			// Display DNS configuration
 			cfg, err := config.LoadConfig()
 			if err != nil {
-				return fmt.Errorf("failed to load configuration: %w", err)
+				fmt.Println("Error loading config:", err)
+				return
 			}
 
 			fmt.Printf("Listen Address: %s\n", cfg.DNS.ListenAddr)
-			fmt.Printf("Listen Port: %d\n", cfg.DNS.ListenPort)
 			fmt.Printf("Upstream DNS Servers: %v\n", cfg.DNS.UpstreamDNS)
 
-			// 检查DNS服务是否在运行
-			status := "Stopped"
-			if isServiceRunning() {
-				status = "Running"
+			// Check if DNS proxy is running
+			if pid := getPID(DNSPIDFile); pid > 0 {
+				fmt.Println("Status: Running")
 			} else {
-				// 使用系统命令检查端口是否在使用中
-				var checkCmd *exec.Cmd
-				switch runtime.GOOS {
-				case "darwin", "linux":
-					checkCmd = exec.Command("sh", "-c", fmt.Sprintf("sudo lsof -i UDP:%d", cfg.DNS.ListenPort))
-				case "windows":
-					checkCmd = exec.Command("cmd", "/c", fmt.Sprintf("netstat -ano | findstr %d", cfg.DNS.ListenPort))
-				}
-
-				if checkCmd != nil {
-					output, _ := checkCmd.CombinedOutput()
-					if len(output) > 0 && !strings.Contains(string(output), "not found") {
-						status = "Running (detected via system check)"
-					}
-				}
+				fmt.Println("Status: Stopped")
 			}
-
-			fmt.Printf("Status: %s\n", status)
-			if status == "Stopped" {
-				fmt.Println("\nDNS service is not running.")
-				fmt.Println("Try running 'gateshift dns start' to start it.")
-
-				// 建议一些常见问题的解决方案
-				fmt.Println("\nPossible issues:")
-				fmt.Println("1. The DNS proxy might need elevated privileges to bind to port", cfg.DNS.ListenPort)
-				fmt.Println("2. Another program might be using port", cfg.DNS.ListenPort)
-				fmt.Println("3. The DNS proxy might have crashed")
-
-				// 如果端口低于1024，提供额外建议
-				if cfg.DNS.ListenPort < 1024 {
-					fmt.Println("\nTip: Port numbers below 1024 require elevated privileges.")
-					fmt.Println("Consider using a higher port number with 'gateshift dns set-port 10053'")
-				}
-			}
-
-			return nil
 		},
 	}
+	dnsCmd.AddCommand(showCmd)
 
-	// 查看DNS日志
-	showLogs := &cobra.Command{
-		Use:   "logs",
-		Short: "Show DNS proxy logs",
-		Long:  `Display the DNS proxy logs to monitor DNS queries and responses.`,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			// 获取用户主目录
-			homeDir, err := os.UserHomeDir()
+	// start command
+	var startForeground bool
+	var startCmd = &cobra.Command{
+		Use:   "start",
+		Short: "Start the DNS proxy service",
+		Long:  `Start the DNS proxy service.`,
+		Run: func(cmd *cobra.Command, args []string) {
+			// Check if DNS proxy is already running
+			if pid := getPID(DNSPIDFile); pid > 0 {
+				fmt.Println("DNS service is already running")
+				return
+			}
+
+			// Load configuration
+			cfg, err := config.LoadConfig()
 			if err != nil {
-				return fmt.Errorf("failed to get home directory: %w", err)
+				fmt.Println("Error loading config:", err)
+				return
 			}
 
-			// 日志文件路径
-			logFile := filepath.Join(homeDir, ".gateshift", "logs", "gateshift-dns.log")
-
-			// 检查日志文件是否存在
-			if _, err := os.Stat(logFile); os.IsNotExist(err) {
-				return fmt.Errorf("DNS log file not found. Make sure the DNS service is running first")
-			}
-
-			// 获取命令行参数
-			lines, _ := cmd.Flags().GetInt("lines")
-			follow, _ := cmd.Flags().GetBool("follow")
-			filter, _ := cmd.Flags().GetString("filter")
-
-			// 使用 grep 和 tail 命令查看日志
-			var command string
-
-			if follow {
-				// 实时查看日志
-				if filter != "" {
-					// 使用 grep 过滤，添加 -i 参数使搜索不区分大小写
-					command = fmt.Sprintf("tail -f -n %d %s | grep -i --line-buffered %s",
-						lines, logFile, filter)
-				} else {
-					command = fmt.Sprintf("tail -f -n %d %s", lines, logFile)
-				}
-
-				fmt.Printf("Showing last %d lines of DNS logs", lines)
-				if filter != "" {
-					fmt.Printf(" (filtered by '%s', case-insensitive)", filter)
-				}
-				fmt.Println(". Press Ctrl+C to exit.")
+			if startForeground {
+				fmt.Println("Starting DNS service in foreground mode. Press Ctrl+C to stop...")
+				startDNSForeground(cfg)
 			} else {
-				// 查看指定行数
-				if filter != "" {
-					// 使用 grep 过滤，添加 -i 参数使搜索不区分大小写
-					command = fmt.Sprintf("grep -i %s %s | tail -n %d",
-						filter, logFile, lines)
-				} else {
-					command = fmt.Sprintf("tail -n %d %s", lines, logFile)
+				fmt.Println("Starting DNS service in the background...")
+				if err := startDNSBackground(cfg); err != nil {
+					fmt.Println("Error starting DNS service:", err)
+					return
 				}
+				fmt.Println("DNS service started successfully in the background")
 			}
-
-			// 创建命令
-			execCmd := exec.Command("sh", "-c", command)
-			execCmd.Stdout = os.Stdout
-			execCmd.Stderr = os.Stderr
-
-			return execCmd.Run()
 		},
 	}
+	startCmd.Flags().BoolVarP(&startForeground, "foreground", "f", false, "Run the DNS proxy in the foreground")
+	dnsCmd.AddCommand(startCmd)
 
-	// 添加标志
-	showLogs.Flags().IntP("lines", "n", 50, "Number of lines to show from the end of the log file")
-	showLogs.Flags().BoolP("follow", "f", false, "Follow the log file (similar to 'tail -f')")
-	showLogs.Flags().StringP("filter", "F", "", "Filter log entries (e.g., domain name, IP address, case-insensitive)")
+	// stop command
+	var stopCmd = &cobra.Command{
+		Use:   "stop",
+		Short: "Stop the DNS proxy service",
+		Long:  `Stop the DNS proxy service.`,
+		Run: func(cmd *cobra.Command, args []string) {
+			fmt.Println("Stopping DNS service...")
+			if err := stopDNS(); err != nil {
+				fmt.Println("Error stopping DNS service:", err)
+				return
+			}
+		},
+	}
+	dnsCmd.AddCommand(stopCmd)
 
-	// 添加所有命令
-	cmd.AddCommand(startDNS, stopDNS, restartDNS, setUpstream, setListenAddr, showDNS, setPort, showLogs)
-	return cmd
+	// restart command
+	var restartCmd = &cobra.Command{
+		Use:   "restart",
+		Short: "Restart the DNS proxy service",
+		Long:  `Restart the DNS proxy service.`,
+		Run: func(cmd *cobra.Command, args []string) {
+			fmt.Println("Restarting DNS service...")
+			// Stop the DNS service first
+			if err := stopDNS(); err != nil {
+				fmt.Println("Error stopping DNS service:", err)
+				return
+			}
+
+			// Load configuration
+			cfg, err := config.LoadConfig()
+			if err != nil {
+				fmt.Println("Error loading config:", err)
+				return
+			}
+
+			// Start the DNS service
+			fmt.Println("Starting DNS service...")
+			if err := startDNSBackground(cfg); err != nil {
+				fmt.Println("Error starting DNS service:", err)
+				return
+			}
+			fmt.Println("DNS service restarted successfully")
+		},
+	}
+	dnsCmd.AddCommand(restartCmd)
+
+	// add-server command
+	var addServerCmd = &cobra.Command{
+		Use:   "add-server [server]",
+		Short: "Add an upstream DNS server",
+		Long:  `Add an upstream DNS server to the DNS proxy configuration.`,
+		Args:  cobra.ExactArgs(1),
+		Run: func(cmd *cobra.Command, args []string) {
+			server := args[0]
+			// Ensure the server has a port (default to 53 if not specified)
+			if _, _, err := net.SplitHostPort(server); err != nil {
+				server = net.JoinHostPort(server, "53")
+			}
+
+			// Load configuration
+			cfg, err := config.LoadConfig()
+			if err != nil {
+				fmt.Println("Error loading config:", err)
+				return
+			}
+
+			// Check if the server already exists
+			for _, s := range cfg.DNS.UpstreamDNS {
+				if s == server {
+					fmt.Printf("Upstream DNS server %s already exists\n", server)
+					return
+				}
+			}
+
+			// Add the server
+			cfg.DNS.UpstreamDNS = append(cfg.DNS.UpstreamDNS, server)
+
+			// Save configuration
+			if err := config.SaveConfig(cfg); err != nil {
+				fmt.Println("Error saving config:", err)
+				return
+			}
+
+			fmt.Printf("Upstream DNS server %s added successfully\n", server)
+			fmt.Println("Restart the DNS service to apply changes: gateshift dns restart")
+		},
+	}
+	dnsCmd.AddCommand(addServerCmd)
+
+	// remove-server command
+	var removeServerCmd = &cobra.Command{
+		Use:   "remove-server [server]",
+		Short: "Remove an upstream DNS server",
+		Long:  `Remove an upstream DNS server from the DNS proxy configuration.`,
+		Args:  cobra.ExactArgs(1),
+		Run: func(cmd *cobra.Command, args []string) {
+			server := args[0]
+			// Ensure the server has a port (default to 53 if not specified)
+			if _, _, err := net.SplitHostPort(server); err != nil {
+				server = net.JoinHostPort(server, "53")
+			}
+
+			// Load configuration
+			cfg, err := config.LoadConfig()
+			if err != nil {
+				fmt.Println("Error loading config:", err)
+				return
+			}
+
+			// Find and remove the server
+			found := false
+			for i, s := range cfg.DNS.UpstreamDNS {
+				if s == server {
+					cfg.DNS.UpstreamDNS = append(cfg.DNS.UpstreamDNS[:i], cfg.DNS.UpstreamDNS[i+1:]...)
+					found = true
+					break
+				}
+			}
+
+			if !found {
+				fmt.Printf("Upstream DNS server %s not found\n", server)
+				return
+			}
+
+			// Save configuration
+			if err := config.SaveConfig(cfg); err != nil {
+				fmt.Println("Error saving config:", err)
+				return
+			}
+
+			fmt.Printf("Upstream DNS server %s removed successfully\n", server)
+			fmt.Println("Restart the DNS service to apply changes: gateshift dns restart")
+		},
+	}
+	dnsCmd.AddCommand(removeServerCmd)
+
+	// list-servers command
+	var listServersCmd = &cobra.Command{
+		Use:   "list-servers",
+		Short: "List all upstream DNS servers",
+		Long:  `List all upstream DNS servers configured for the DNS proxy service.`,
+		Run: func(cmd *cobra.Command, args []string) {
+			// Load configuration
+			cfg, err := config.LoadConfig()
+			if err != nil {
+				fmt.Println("Error loading config:", err)
+				return
+			}
+
+			if len(cfg.DNS.UpstreamDNS) == 0 {
+				fmt.Println("No upstream DNS servers configured")
+				return
+			}
+
+			fmt.Println("Upstream DNS servers:")
+			for _, server := range cfg.DNS.UpstreamDNS {
+				fmt.Printf("- %s\n", server)
+			}
+		},
+	}
+	dnsCmd.AddCommand(listServersCmd)
 }
 
-// 帮助函数：检查DNS服务是否正在运行
+// isServiceRunning 检查DNS服务是否在运行
 func isServiceRunning() bool {
-	// 获取当前二进制文件的路径
-	ex, err := os.Executable()
+	// 从PID文件获取进程ID
+	pid := getPID(DNSPIDFile)
+	if pid <= 0 {
+		return false
+	}
+
+	// 检查进程是否存在
+	process, err := os.FindProcess(pid)
 	if err != nil {
 		return false
 	}
 
-	// 构建命令用于查找包含"dns start"的进程
-	var command string
-	switch runtime.GOOS {
-	case "darwin", "linux":
-		command = fmt.Sprintf("pgrep -f '%s dns start'", filepath.Base(ex))
-	case "windows":
-		command = fmt.Sprintf("tasklist | findstr %s | findstr \"dns start\"", filepath.Base(ex))
-	default:
-		return false
+	// 在类Unix系统上，FindProcess总是成功的，我们需要发送一个信号0来检查进程是否真的存在
+	if runtime.GOOS != "windows" {
+		err = process.Signal(syscall.Signal(0))
+		return err == nil
 	}
 
-	// 执行命令
-	cmd := exec.Command("sh", "-c", command)
-	output, err := cmd.Output()
+	// Windows上，我们可以假设如果FindProcess成功，进程就存在
+	return true
+}
 
-	// 如果命令执行成功且有输出，表示服务正在运行
-	return err == nil && len(output) > 0
+// getPID 从PID文件中读取进程ID
+func getPID(pidFile string) int {
+	if _, err := os.Stat(pidFile); os.IsNotExist(err) {
+		return 0
+	}
+
+	data, err := os.ReadFile(pidFile)
+	if err != nil {
+		return 0
+	}
+
+	pid := 0
+	fmt.Sscanf(string(data), "%d", &pid)
+	return pid
+}
+
+// savePID 保存进程ID到PID文件
+func savePID(pidFile string, pid int) error {
+	return os.WriteFile(pidFile, []byte(fmt.Sprintf("%d", pid)), 0644)
+}
+
+// startDNSForeground 在前台启动DNS服务
+func startDNSForeground(cfg *config.Config) {
+	// 启动DNS代理
+	var err error
+	dnsProxy, err = dns.NewDNSProxy(cfg.DNS.ListenAddr, cfg.DNS.UpstreamDNS)
+	if err != nil {
+		fmt.Printf("Error creating DNS proxy: %v\n", err)
+		return
+	}
+
+	if err := dnsProxy.Start(); err != nil {
+		fmt.Printf("Error starting DNS proxy: %v\n", err)
+		return
+	}
+
+	// 配置系统DNS
+	if err := dns.ConfigureSystemDNS(cfg.DNS.ListenAddr); err != nil {
+		fmt.Printf("Warning: Failed to configure system DNS: %v\n", err)
+	}
+
+	// 保存当前进程PID
+	savePID(DNSPIDFile, os.Getpid())
+
+	// 等待中断信号
+	fmt.Println("DNS service running. Press Ctrl+C to stop.")
+	select {}
+}
+
+// startDNSBackground 在后台启动DNS服务
+func startDNSBackground(cfg *config.Config) error {
+	// 获取当前可执行文件路径
+	exe, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("failed to get executable path: %w", err)
+	}
+
+	// 获取用户主目录，用于日志文件
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return fmt.Errorf("failed to get home directory: %w", err)
+	}
+
+	// 创建日志目录
+	logDir := filepath.Join(homeDir, ".gateshift", "logs")
+	if err := os.MkdirAll(logDir, 0755); err != nil {
+		return fmt.Errorf("failed to create log directory: %w", err)
+	}
+
+	// 日志文件路径
+	logFile := filepath.Join(logDir, "gateshift-dns.log")
+
+	// 打开日志文件
+	f, err := os.OpenFile(logFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	if err != nil {
+		return fmt.Errorf("failed to open log file: %w", err)
+	}
+
+	// 构建命令行参数
+	args := []string{"dns", "start", "-f"}
+
+	// 如果有配置文件路径，也传递给子进程
+	if cfgFile != "" {
+		args = append(args, "--config", cfgFile)
+	}
+
+	// 创建新进程
+	cmd := exec.Command(exe, args...)
+	cmd.Stdout = f
+	cmd.Stderr = f
+
+	// 设置新进程独立运行
+	cmd.SysProcAttr = &syscall.SysProcAttr{
+		Setpgid: true,
+	}
+
+	// 启动进程
+	if err := cmd.Start(); err != nil {
+		f.Close()
+		return fmt.Errorf("failed to start DNS service: %w", err)
+	}
+
+	// 保存PID
+	savePID(DNSPIDFile, cmd.Process.Pid)
+
+	// 分离进程
+	cmd.Process.Release()
+
+	// 延迟关闭日志文件
+	go func() {
+		time.Sleep(1 * time.Second)
+		f.Close()
+	}()
+
+	return nil
+}
+
+// stopDNS 停止DNS服务
+func stopDNS() error {
+	// 读取PID
+	pid := getPID(DNSPIDFile)
+	if pid <= 0 {
+		fmt.Println("No DNS service is running.")
+		return nil
+	}
+
+	fmt.Printf("Stopping DNS service (PID: %d)...\n", pid)
+
+	// 发送终止信号
+	var cmd *exec.Cmd
+	switch runtime.GOOS {
+	case "darwin", "linux":
+		cmd = exec.Command("sudo", "kill", fmt.Sprintf("%d", pid))
+	case "windows":
+		cmd = exec.Command("taskkill", "/F", "/PID", fmt.Sprintf("%d", pid))
+	default:
+		return fmt.Errorf("unsupported operating system: %s", runtime.GOOS)
+	}
+
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("failed to stop DNS service: %w", err)
+	}
+
+	// 删除PID文件
+	os.Remove(DNSPIDFile)
+
+	// 恢复系统DNS设置
+	if err := dns.RestoreSystemDNS(); err != nil {
+		return fmt.Errorf("failed to restore system DNS: %w", err)
+	}
+
+	fmt.Println("DNS service stopped successfully. System DNS settings restored.")
+	return nil
 }
 
 func main() {

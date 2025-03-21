@@ -19,7 +19,6 @@ type Config struct {
 // DNSConfig holds DNS proxy configuration
 type DNSConfig struct {
 	ListenAddr  string   `mapstructure:"listen_addr"`
-	ListenPort  int      `mapstructure:"listen_port"`
 	UpstreamDNS []string `mapstructure:"upstream_dns"`
 }
 
@@ -72,7 +71,6 @@ func LoadConfig() (*Config, error) {
 	viper.SetDefault("proxy_gateway", "192.168.31.100")
 	viper.SetDefault("default_gateway", "192.168.31.1")
 	viper.SetDefault("dns.listen_addr", "127.0.0.1")
-	viper.SetDefault("dns.listen_port", 53)
 	viper.SetDefault("dns.upstream_dns", []string{"1.1.1.1:53", "8.8.8.8:53"})
 
 	// Try to read config file
@@ -112,7 +110,6 @@ func SaveConfig(config *Config) error {
 	viper.Set("proxy_gateway", config.ProxyGateway)
 	viper.Set("default_gateway", config.DefaultGateway)
 	viper.Set("dns.listen_addr", config.DNS.ListenAddr)
-	viper.Set("dns.listen_port", config.DNS.ListenPort)
 	viper.Set("dns.upstream_dns", config.DNS.UpstreamDNS)
 
 	// 如果配置文件不存在，使用 SafeWriteConfigAs
@@ -133,7 +130,6 @@ func ResetToDefaults() (*Config, error) {
 		DefaultGateway: "192.168.31.1",
 		DNS: DNSConfig{
 			ListenAddr:  "127.0.0.1",
-			ListenPort:  53,
 			UpstreamDNS: []string{"1.1.1.1:53", "8.8.8.8:53"},
 		},
 	}
