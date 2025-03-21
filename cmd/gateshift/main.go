@@ -59,8 +59,6 @@ func init() {
 }
 
 func proxyCmd() *cobra.Command {
-	var keepRunning bool
-
 	cmd := &cobra.Command{
 		Use:   "proxy",
 		Short: "Switch to the proxy gateway",
@@ -76,112 +74,13 @@ func proxyCmd() *cobra.Command {
 				return err
 			}
 
-			// Auto-start DNS proxy if enabled
-			if cfg.DNS.Enabled {
-				// Only start if not already running
-				if dnsProxy == nil || !dnsProxy.IsRunning() {
-					fmt.Println("Starting DNS proxy to prevent DNS leaks...")
-
-					// Verify DNS configuration
-					if len(cfg.DNS.UpstreamDNS) == 0 {
-						fmt.Println("Warning: No upstream DNS servers configured. Using defaults.")
-						cfg.DNS.UpstreamDNS = []string{"1.1.1.1:53", "8.8.8.8:53"}
-						config.SaveConfig(cfg)
-					}
-
-					// Create DNS proxy
-					dnsProxy, err = dns.NewDNSProxy(cfg.DNS.ListenAddr, cfg.DNS.ListenPort, cfg.DNS.UpstreamDNS)
-					if err != nil {
-						fmt.Printf("Error: Failed to create DNS proxy: %v\n", err)
-					} else {
-						// Start DNS proxy
-						if err := dnsProxy.Start(); err != nil {
-							fmt.Printf("Error: Failed to start DNS proxy: %v\n", err)
-
-							// Provide more helpful error messages based on the error
-							if strings.Contains(err.Error(), "address already in use") {
-								fmt.Println("The port is already in use. Try using a different port:")
-								fmt.Println("  gateshift dns set-port 5353")
-							} else if strings.Contains(err.Error(), "permission denied") {
-								fmt.Println("Permission denied. Try one of the following:")
-								fmt.Println("1. Run with sudo")
-								fmt.Println("2. Use a port above 1024:")
-								fmt.Println("   gateshift dns set-port 5353")
-							}
-
-							// Reset DNS proxy since it failed to start
-							dnsProxy = nil
-						} else {
-							// Successfully started, now configure system DNS
-							if err := dns.ConfigureSystemDNS(cfg.DNS.ListenAddr, cfg.DNS.ListenPort); err != nil {
-								fmt.Printf("Warning: Failed to configure system DNS: %v\n", err)
-								fmt.Println("You may need to manually configure your DNS settings.")
-							} else {
-								fmt.Println("DNS leak protection enabled")
-							}
-
-							// If --keep flag is set, keep the process running
-							if keepRunning {
-								fmt.Println("Running in foreground mode. Press Ctrl+C to exit.")
-
-								// Create a channel to wait for interrupt signal
-								c := make(chan os.Signal, 1)
-								signal.Notify(c, os.Interrupt, syscall.SIGTERM)
-
-								// Block until we receive a signal
-								<-c
-
-								// Clean up before exiting
-								fmt.Println("\nReceived interrupt signal. Shutting down...")
-								if dnsProxy != nil && dnsProxy.IsRunning() {
-									fmt.Println("Stopping DNS proxy...")
-									if err := dnsProxy.Stop(); err != nil {
-										fmt.Printf("Warning: Failed to stop DNS proxy: %v\n", err)
-									}
-
-									if err := dns.RestoreSystemDNS(); err != nil {
-										fmt.Printf("Warning: Failed to restore system DNS: %v\n", err)
-									}
-								}
-
-								fmt.Println("Shutdown complete. Exiting.")
-							}
-						}
-					}
-				} else if keepRunning {
-					// Proxy was already running, but we want to keep the process alive
-					fmt.Println("DNS proxy is already running. Keeping process alive.")
-					fmt.Println("Running in foreground mode. Press Ctrl+C to exit.")
-
-					// Create a channel to wait for interrupt signal
-					c := make(chan os.Signal, 1)
-					signal.Notify(c, os.Interrupt, syscall.SIGTERM)
-
-					// Block until we receive a signal
-					<-c
-
-					// Clean up before exiting
-					fmt.Println("\nReceived interrupt signal. Shutting down...")
-					if dnsProxy != nil && dnsProxy.IsRunning() {
-						fmt.Println("Stopping DNS proxy...")
-						if err := dnsProxy.Stop(); err != nil {
-							fmt.Printf("Warning: Failed to stop DNS proxy: %v\n", err)
-						}
-
-						if err := dns.RestoreSystemDNS(); err != nil {
-							fmt.Printf("Warning: Failed to restore system DNS: %v\n", err)
-						}
-					}
-
-					fmt.Println("Shutdown complete. Exiting.")
-				}
-			}
+			fmt.Println("Switched to proxy gateway successfully")
+			fmt.Println("Note: For DNS leak protection, you may want to run: gateshift dns start")
 
 			return nil
 		},
 	}
 
-	cmd.Flags().BoolVarP(&keepRunning, "keep", "k", false, "Keep running in foreground (blocks terminal)")
 	return cmd
 }
 
@@ -201,17 +100,8 @@ func defaultCmd() *cobra.Command {
 				return err
 			}
 
-			// Auto-stop DNS proxy if it's running
-			if dnsProxy != nil && dnsProxy.IsRunning() {
-				fmt.Println("Stopping DNS proxy...")
-				if err := dnsProxy.Stop(); err != nil {
-					fmt.Printf("Warning: Failed to stop DNS proxy: %v\n", err)
-				}
-
-				if err := dns.RestoreSystemDNS(); err != nil {
-					fmt.Printf("Warning: Failed to restore system DNS: %v\n", err)
-				}
-			}
+			fmt.Println("Switched to default gateway successfully")
+			fmt.Println("Note: If DNS proxy is running, you may want to stop it with: gateshift dns stop")
 
 			return nil
 		},
@@ -307,7 +197,6 @@ func configCmd() *cobra.Command {
 			fmt.Println("Configuration reset to default values:")
 			fmt.Printf("Proxy Gateway: %s\n", cfg.ProxyGateway)
 			fmt.Printf("Default Gateway: %s\n", cfg.DefaultGateway)
-			fmt.Printf("DNS Proxy: Disabled\n")
 			fmt.Printf("DNS Listen Address: %s\n", cfg.DNS.ListenAddr)
 			fmt.Printf("DNS Listen Port: %d\n", cfg.DNS.ListenPort)
 			fmt.Printf("DNS Upstream Servers: %v\n", cfg.DNS.UpstreamDNS)
@@ -364,21 +253,23 @@ func statusCmd() *cobra.Command {
 			if err == nil {
 				fmt.Printf("Public IPv4: %s\n", publicIP)
 			} else {
-				fmt.Printf("Public IPv4: Failed to retrieve (%v)\n", err)
+				fmt.Printf("Public IPv4: Not available\n")
 			}
 
 			if err6 == nil {
 				fmt.Printf("Public IPv6: %s\n", publicIPv6)
 			} else {
-				fmt.Printf("Public IPv6: Failed to retrieve (%v)\n", err6)
+				fmt.Printf("Public IPv6: Not available\n")
 			}
 
 			// DNS Proxy status
 			cfg, err := config.LoadConfig()
 			if err == nil {
 				fmt.Printf("\nDNS Proxy Settings:\n")
-				fmt.Printf("  Enabled in Config: %v\n", cfg.DNS.Enabled)
-				if dnsProxy != nil && dnsProxy.IsRunning() {
+
+				// 使用 isServiceRunning 函数检查服务是否在运行
+				running := isServiceRunning()
+				if running || (dnsProxy != nil && dnsProxy.IsRunning()) {
 					fmt.Printf("  Status: Running\n")
 					fmt.Printf("  Listen Address: %s:%d\n", cfg.DNS.ListenAddr, cfg.DNS.ListenPort)
 					fmt.Printf("  Upstream DNS: %v\n", cfg.DNS.UpstreamDNS)
@@ -917,63 +808,11 @@ func dnsCmd() *cobra.Command {
 		Long:  `Commands for viewing and configuring DNS settings.`,
 	}
 
-	// 启用DNS代理
-	enableDNS := &cobra.Command{
-		Use:   "enable",
-		Short: "Enable the DNS proxy in configuration",
-		Long:  `Enable the DNS proxy in configuration. This only modifies the configuration, but does not start the service.`,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			// 读取配置
-			cfg, err := config.LoadConfig()
-			if err != nil {
-				return fmt.Errorf("failed to load configuration: %w", err)
-			}
-
-			// 设置DNS代理为启用状态
-			cfg.DNS.Enabled = true
-
-			// 保存配置
-			if err := config.SaveConfig(cfg); err != nil {
-				return fmt.Errorf("failed to save configuration: %w", err)
-			}
-
-			fmt.Println("DNS proxy enabled in configuration")
-			fmt.Println("To start the service, use 'gateshift dns start'")
-			return nil
-		},
-	}
-
-	// 禁用DNS代理
-	disableDNS := &cobra.Command{
-		Use:   "disable",
-		Short: "Disable the DNS proxy in configuration",
-		Long:  `Disable the DNS proxy in configuration. If the service is running, it will continue until stopped.`,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			// 读取配置
-			cfg, err := config.LoadConfig()
-			if err != nil {
-				return fmt.Errorf("failed to load configuration: %w", err)
-			}
-
-			// 设置DNS代理为禁用状态
-			cfg.DNS.Enabled = false
-
-			// 保存配置
-			if err := config.SaveConfig(cfg); err != nil {
-				return fmt.Errorf("failed to save configuration: %w", err)
-			}
-
-			fmt.Println("DNS proxy disabled in configuration")
-			fmt.Println("To stop a running service, use 'gateshift dns stop'")
-			return nil
-		},
-	}
-
 	// 启动DNS服务
 	startDNS := &cobra.Command{
 		Use:   "start",
 		Short: "Start the DNS proxy service",
-		Long:  `Start the DNS proxy service and run it in the background.`,
+		Long:  `Start the DNS proxy service.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			// 读取配置
 			cfg, err := config.LoadConfig()
@@ -1026,16 +865,23 @@ func dnsCmd() *cobra.Command {
 
 			// 如果是前台运行，或者是从后台启动的子进程
 
-			// 自动启用DNS服务（如果当前配置中禁用）
-			if !cfg.DNS.Enabled {
-				cfg.DNS.Enabled = true
-				if err := config.SaveConfig(cfg); err != nil {
-					return fmt.Errorf("failed to save configuration: %w", err)
-				}
+			// 获取用户主目录，用于存放日志文件
+			homeDir, err := os.UserHomeDir()
+			if err != nil {
+				return fmt.Errorf("failed to get home directory: %w", err)
 			}
 
+			// 创建日志目录
+			logDir := filepath.Join(homeDir, ".gateshift", "logs")
+			if err := os.MkdirAll(logDir, 0755); err != nil {
+				return fmt.Errorf("failed to create log directory: %w", err)
+			}
+
+			// 日志文件路径
+			logFilePath := filepath.Join(logDir, "gateshift-dns.log")
+
 			// 创建日志文件
-			logFile, err := os.OpenFile("/tmp/gateshift-daemon.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+			logFile, err := os.OpenFile(logFilePath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
 			if err != nil {
 				return fmt.Errorf("failed to open log file: %w", err)
 			}
@@ -1324,7 +1170,6 @@ func dnsCmd() *cobra.Command {
 				return fmt.Errorf("failed to load configuration: %w", err)
 			}
 
-			fmt.Printf("DNS Proxy Enabled: %v\n", cfg.DNS.Enabled)
 			fmt.Printf("Listen Address: %s\n", cfg.DNS.ListenAddr)
 			fmt.Printf("Listen Port: %d\n", cfg.DNS.ListenPort)
 			fmt.Printf("Upstream DNS Servers: %v\n", cfg.DNS.UpstreamDNS)
@@ -1352,8 +1197,8 @@ func dnsCmd() *cobra.Command {
 			}
 
 			fmt.Printf("Status: %s\n", status)
-			if status == "Stopped" && cfg.DNS.Enabled {
-				fmt.Println("\nDNS proxy is enabled in configuration but not running.")
+			if status == "Stopped" {
+				fmt.Println("\nDNS service is not running.")
 				fmt.Println("Try running 'gateshift dns start' to start it.")
 
 				// 建议一些常见问题的解决方案
@@ -1379,7 +1224,14 @@ func dnsCmd() *cobra.Command {
 		Short: "Show DNS proxy logs",
 		Long:  `Display the DNS proxy logs to monitor DNS queries and responses.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			logFile := "/tmp/gateshift-daemon.log"
+			// 获取用户主目录
+			homeDir, err := os.UserHomeDir()
+			if err != nil {
+				return fmt.Errorf("failed to get home directory: %w", err)
+			}
+
+			// 日志文件路径
+			logFile := filepath.Join(homeDir, ".gateshift", "logs", "gateshift-dns.log")
 
 			// 检查日志文件是否存在
 			if _, err := os.Stat(logFile); os.IsNotExist(err) {
@@ -1435,7 +1287,7 @@ func dnsCmd() *cobra.Command {
 	showLogs.Flags().StringP("filter", "F", "", "Filter log entries (e.g., domain name, IP address, case-insensitive)")
 
 	// 添加所有命令
-	cmd.AddCommand(enableDNS, disableDNS, startDNS, stopDNS, restartDNS, setUpstream, setListenAddr, showDNS, setPort, showLogs)
+	cmd.AddCommand(startDNS, stopDNS, restartDNS, setUpstream, setListenAddr, showDNS, setPort, showLogs)
 	return cmd
 }
 
