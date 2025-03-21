@@ -45,22 +45,36 @@ func configureDarwinDNS(dnsServer string, port int) error {
 	}
 
 	// MacOS doesn't support specifying DNS ports through networksetup
-	// If using a non-standard port, we need to set up a local resolver
 	if port != 53 {
+		// 当使用非标准端口时，构建完整的地址（IP:Port 格式）
+		fullAddress := fmt.Sprintf("%s:%d", dnsServer, port)
 		log.Printf("Warning: Using non-standard DNS port %d on macOS", port)
-		log.Printf("The DNS server will be set to %s, but applications will need to be configured to use port %d", dnsServer, port)
-		log.Printf("Try using the standard port 53 by running with sudo or setting the port to 53 with 'gateshift dns set-port 53'")
+		log.Printf("MacOS does not natively support DNS ports through system settings")
+		log.Printf("The following methods are recommended:")
+		log.Printf("1. Set applications to use %s as DNS server", fullAddress)
+		log.Printf("2. Use port 53 (requires root): sudo gateshift dns set-port 53")
+		log.Printf("3. Configure a local resolver that forwards to %s", fullAddress)
+
+		// 尝试设置系统 DNS，但警告用户可能无法使用非标准端口
+		cmd := exec.Command("networksetup", "-setdnsservers", iface.ServiceName, dnsServer)
+		output, err := cmd.CombinedOutput()
+		if err != nil {
+			return fmt.Errorf("failed to set DNS servers: %w, output: %s", err, string(output))
+		}
+
+		log.Printf("DNS server address set to %s on %s, but port %d may not be used by all applications",
+			dnsServer, iface.ServiceName, port)
+		return nil
 	}
 
-	// Use networksetup to change DNS servers
+	// 使用标准端口 53
 	cmd := exec.Command("networksetup", "-setdnsservers", iface.ServiceName, dnsServer)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("failed to set DNS servers: %w, output: %s", err, string(output))
 	}
 
-	log.Printf("DNS configured to use %s on %s", dnsServer, iface.ServiceName)
-	log.Printf("If DNS is not working, try setting port to 53 with 'sudo gateshift dns set-port 53'")
+	log.Printf("DNS configured to use %s (port 53) on %s", dnsServer, iface.ServiceName)
 	return nil
 }
 

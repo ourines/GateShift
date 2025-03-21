@@ -174,6 +174,12 @@ gateshift dns set-port 53            # Default uses port 53
 # If you encounter port 53 permission issues, you can set a higher port number
 gateshift dns set-port 10053         # Use a non-privileged port
 
+# Special note for macOS users
+# macOS does not support specifying DNS ports through system settings. If using a non-standard port (not 53), you have these options:
+# 1. Configure individual applications to use the DNS server with IP:port
+# 2. Use sudo to run on standard port 53: sudo gateshift dns set-port 53
+# 3. Configure a local resolver that forwards to the specified port
+
 # Configure upstream DNS servers (multiple can be set)
 gateshift dns set-upstream 1.1.1.1 8.8.8.8 9.9.9.9
 # System will automatically add ":53" port suffix if not present

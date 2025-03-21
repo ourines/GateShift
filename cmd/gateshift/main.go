@@ -917,6 +917,14 @@ func dnsCmd() *cobra.Command {
 			}
 
 			// 配置系统 DNS
+			log.Printf("Configuring system DNS to use %s:%d", cfg.DNS.ListenAddr, cfg.DNS.ListenPort)
+
+			// 非标准端口的特别提示
+			if cfg.DNS.ListenPort != 53 && runtime.GOOS == "darwin" {
+				log.Printf("Warning: Using non-standard port %d on macOS", cfg.DNS.ListenPort)
+				log.Printf("Some applications may not respect the port setting and will continue using port 53")
+			}
+
 			if err := dns.ConfigureSystemDNS(cfg.DNS.ListenAddr, cfg.DNS.ListenPort); err != nil {
 				log.Printf("Warning: Failed to configure system DNS: %v", err)
 			} else {
