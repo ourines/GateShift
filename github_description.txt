@@ -1,5 +1,0 @@
-英文描述（GitHub Description）：
-A cross-platform gateway switching tool designed for OpenWrt bypass routers, allowing seamless traffic path switching between default and proxy gateways.
-
-中文描述（对应README顶部）：
-GateShift是一个专为OpenWrt旁路由设计的网关切换工具，让用户能够在默认网关和代理网关之间无缝切换网络流量路径，特别适合需要在普通上网和科学上网之间灵活切换的场景。 
