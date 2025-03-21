@@ -1137,6 +1137,55 @@ func init() {
 		},
 	}
 	dnsCmd.AddCommand(listServersCmd)
+
+	// cache-stats command
+	var cacheStatsCmd = &cobra.Command{
+		Use:   "cache-stats",
+		Short: "Show DNS cache statistics",
+		Long:  `Display statistics about the DNS cache, such as size and hit ratio.`,
+		Run: func(cmd *cobra.Command, args []string) {
+			// Check if DNS proxy is running
+			if pid := getPID(DNSPIDFile); pid <= 0 {
+				fmt.Println("DNS service is not running")
+				return
+			}
+
+			// If DNS proxy is running in this process
+			if dnsProxy != nil && dnsProxy.IsRunning() {
+				stats := dnsProxy.CacheStats()
+				fmt.Println("DNS Cache Statistics:")
+				fmt.Printf("Cache Size: %d entries\n", stats["size"])
+			} else {
+				fmt.Println("Cannot access cache statistics: DNS service is running in another process")
+				fmt.Println("Use 'gateshift dns restart' to restart the DNS service in the current process")
+			}
+		},
+	}
+	dnsCmd.AddCommand(cacheStatsCmd)
+
+	// clear-cache command
+	var clearCacheCmd = &cobra.Command{
+		Use:   "clear-cache",
+		Short: "Clear the DNS cache",
+		Long:  `Remove all entries from the DNS cache.`,
+		Run: func(cmd *cobra.Command, args []string) {
+			// Check if DNS proxy is running
+			if pid := getPID(DNSPIDFile); pid <= 0 {
+				fmt.Println("DNS service is not running")
+				return
+			}
+
+			// If DNS proxy is running in this process
+			if dnsProxy != nil && dnsProxy.IsRunning() {
+				dnsProxy.ClearCache()
+				fmt.Println("DNS cache cleared successfully")
+			} else {
+				fmt.Println("Cannot clear cache: DNS service is running in another process")
+				fmt.Println("Use 'gateshift dns restart' to restart the DNS service in the current process")
+			}
+		},
+	}
+	dnsCmd.AddCommand(clearCacheCmd)
 }
 
 // isServiceRunning 检查DNS服务是否在运行

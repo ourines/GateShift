@@ -111,6 +111,8 @@ gateshift dns logs                         # 查看 DNS 日志
 gateshift dns logs -f                      # 实时查看 DNS 日志
 gateshift dns logs -n 100                  # 查看最近 100 行 DNS 日志
 gateshift dns logs -F "google.com"         # 过滤包含 google.com 的日志
+gateshift dns cache-stats                  # 显示 DNS 缓存统计信息
+gateshift dns clear-cache                  # 清理 DNS 缓存
 ```
 
 ## 配置文件
@@ -154,6 +156,16 @@ GateShift提供了两种DNS服务运行模式，以适应不同场景的需求�
 注意：使用端口53（默认DNS端口）通常需要管理员/root权限，因为：
 - 绑定特权端口（小于1024的端口）需要特殊权限
 - 修改系统DNS设置需要特殊权限
+
+### DNS性能优化
+
+GateShift实现了多项DNS性能优化技术，使DNS解析更快速、更可靠：
+
+1. **并行查询**: 同时向多个上游DNS服务器发送查询，使用最快的响应
+2. **本地缓存**: 缓存DNS查询结果，显著减少重复查询的响应时间
+3. **智能超时处理**: 灵活的超时机制，确保即使某些服务器未响应，仍能快速获得结果
+
+这些优化使GateShift的DNS服务特别适合需要稳定、快速DNS解析的场景。
 
 ### DNS配置管理
 

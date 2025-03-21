@@ -109,6 +109,8 @@ gateshift dns logs                         # View DNS logs
 gateshift dns logs -f                      # View DNS logs in real-time
 gateshift dns logs -n 100                  # View last 100 lines of DNS logs
 gateshift dns logs -F "google.com"         # Filter logs containing google.com
+gateshift dns cache-stats                  # Show DNS cache statistics
+gateshift dns clear-cache                  # Clear DNS cache
 ```
 
 ## Configuration
@@ -222,6 +224,16 @@ GateShift stores all data in the `.gateshift` folder in the user's home director
 └── logs/                   # Logs directory
     └── gateshift-dns.log   # DNS service log file
 ```
+
+### DNS Performance Optimization
+
+GateShift implements several DNS performance optimization techniques to make DNS resolution faster and more reliable:
+
+1. **Parallel Queries**: Sends queries to multiple upstream DNS servers simultaneously and uses the fastest response
+2. **Local Caching**: Caches DNS query results to significantly reduce response time for repeated queries
+3. **Smart Timeout Handling**: Flexible timeout mechanism ensures quick results even if some servers don't respond
+
+These optimizations make GateShift's DNS service particularly suitable for scenarios requiring stable and fast DNS resolution.
 
 ## Typical Use Cases
 
