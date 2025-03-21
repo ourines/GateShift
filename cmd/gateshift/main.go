@@ -1089,13 +1089,23 @@ func getPID(pidFile string) int {
 		return 0
 	}
 
+	// 尝试直接读取
 	data, err := os.ReadFile(pidFile)
+	if err == nil {
+		pid := 0
+		fmt.Sscanf(string(data), "%d", &pid)
+		return pid
+	}
+
+	// 如果直接读取失败，尝试使用sudo读取
+	cmd := exec.Command("sudo", "cat", pidFile)
+	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return 0
 	}
 
 	pid := 0
-	fmt.Sscanf(string(data), "%d", &pid)
+	fmt.Sscanf(string(output), "%d", &pid)
 	return pid
 }
 
@@ -1155,11 +1165,8 @@ func startDNSBackground(cfg *config.Config) error {
 	// 日志文件路径
 	logFile := filepath.Join(logDir, "gateshift-dns.log")
 
-	// 打开日志文件
-	f, err := os.OpenFile(logFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
-	if err != nil {
-		return fmt.Errorf("failed to open log file: %w", err)
-	}
+	// 使用预先获取的sudo会话
+	sudoSession := utils.NewSudoSession(15 * time.Minute)
 
 	// 构建命令行参数
 	args := []string{"dns", "start", "-f"}
@@ -1169,72 +1176,128 @@ func startDNSBackground(cfg *config.Config) error {
 		args = append(args, "--config", cfgFile)
 	}
 
-	// 创建新进程
-	cmd := exec.Command(exe, args...)
-	cmd.Stdout = f
-	cmd.Stderr = f
+	// 获取当前用户和组ID，用于后续修改文件权限
+	currentUser := fmt.Sprintf("%d", os.Getuid())
+	currentGroup := fmt.Sprintf("%d", os.Getgid())
 
-	// 设置新进程独立运行
-	cmd.SysProcAttr = &syscall.SysProcAttr{
-		Setpgid: true,
+	// 用sudo运行完整命令
+	var cmd *exec.Cmd
+	switch runtime.GOOS {
+	case "darwin", "linux":
+		// 创建运行命令
+		fullCmd := append([]string{exe}, args...)
+
+		// 添加重定向
+		redirectCmd := append(fullCmd, ">", logFile, "2>&1", "&")
+
+		// 使用sudo和sh -c执行命令
+		err = sudoSession.RunWithPrivileges("sh", "-c", strings.Join(redirectCmd, " "))
+	case "windows":
+		// Windows上以管理员身份运行
+		cmd = exec.Command("powershell", "-Command", "Start-Process", "-Verb", "RunAs", exe, "-ArgumentList", strings.Join(args, " "))
+		err = cmd.Run()
+	default:
+		return fmt.Errorf("unsupported operating system: %s", runtime.GOOS)
 	}
 
-	// 启动进程
-	if err := cmd.Start(); err != nil {
-		f.Close()
+	if err != nil {
 		return fmt.Errorf("failed to start DNS service: %w", err)
 	}
 
-	// 保存PID
-	savePID(DNSPIDFile, cmd.Process.Pid)
+	// 等待一小段时间确保进程已启动
+	time.Sleep(1 * time.Second)
 
-	// 分离进程
-	cmd.Process.Release()
+	// 修改日志文件权限，使当前用户可以访问
+	if runtime.GOOS != "windows" {
+		// 修改日志文件的所有者为当前用户
+		if err := sudoSession.RunWithPrivileges("chown", currentUser+":"+currentGroup, logFile); err != nil {
+			fmt.Printf("Warning: could not change log file ownership: %v\n", err)
+		}
+	}
 
-	// 延迟关闭日志文件
-	go func() {
-		time.Sleep(1 * time.Second)
-		f.Close()
-	}()
+	// 尝试获取进程PID并保存
+	if runtime.GOOS != "windows" {
+		out, err := exec.Command("sudo", "pgrep", "-f", fmt.Sprintf("%s.*dns start -f", filepath.Base(exe))).Output()
+		if err == nil && len(out) > 0 {
+			pid := 0
+			fmt.Sscanf(string(out), "%d", &pid)
+			if pid > 0 {
+				// 需要使用sudo写入PID文件，确保权限正确
+				pidData := fmt.Sprintf("%d", pid)
+				err = sudoSession.RunWithPrivileges("sh", "-c", fmt.Sprintf("echo '%s' > %s", pidData, DNSPIDFile))
+				if err != nil {
+					fmt.Printf("Warning: could not save PID file: %v\n", err)
+				}
+
+				// 修改PID文件权限，使当前用户可以访问
+				if err := sudoSession.RunWithPrivileges("chown", currentUser+":"+currentGroup, DNSPIDFile); err != nil {
+					fmt.Printf("Warning: could not change PID file ownership: %v\n", err)
+				}
+			}
+		}
+	}
+
+	// 检查进程是否成功启动
+	// 我们尝试连接DNS端口来验证
+	time.Sleep(500 * time.Millisecond) // 给进程多一点时间启动
+	conn, err := net.DialTimeout("udp", fmt.Sprintf("%s:53", cfg.DNS.ListenAddr), 500*time.Millisecond)
+	if err == nil {
+		conn.Close()
+		fmt.Println("DNS service started successfully and is responding to requests.")
+	} else {
+		fmt.Printf("Warning: DNS service might not have started correctly: %v\n", err)
+		fmt.Println("Check logs at:", logFile)
+		// 尝试打开日志文件末尾显示错误信息
+		if runtime.GOOS != "windows" {
+			tailOut, _ := exec.Command("tail", "-5", logFile).CombinedOutput()
+			if len(tailOut) > 0 {
+				fmt.Println("Last few log lines:")
+				fmt.Println(string(tailOut))
+			}
+		}
+	}
 
 	return nil
 }
 
 // stopDNS 停止DNS服务
 func stopDNS() error {
+	// 获取sudo会话
+	sudoSession := utils.NewSudoSession(15 * time.Minute)
+
 	// 读取PID
 	pid := getPID(DNSPIDFile)
 	if pid <= 0 {
 		fmt.Println("No DNS service is running.")
+		// 如果没有运行的服务但PID文件存在，尝试删除
+		if _, err := os.Stat(DNSPIDFile); err == nil {
+			sudoSession.RunWithPrivileges("rm", DNSPIDFile)
+		}
 		return nil
 	}
 
 	fmt.Printf("Stopping DNS service (PID: %d)...\n", pid)
 
-	// 发送终止信号
-	var cmd *exec.Cmd
-	switch runtime.GOOS {
-	case "darwin", "linux":
-		cmd = exec.Command("sudo", "kill", fmt.Sprintf("%d", pid))
-	case "windows":
-		cmd = exec.Command("taskkill", "/F", "/PID", fmt.Sprintf("%d", pid))
-	default:
-		return fmt.Errorf("unsupported operating system: %s", runtime.GOOS)
-	}
-
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("failed to stop DNS service: %w", err)
+	// 使用sudo发送终止信号
+	if err := sudoSession.RunWithPrivileges("kill", fmt.Sprintf("%d", pid)); err != nil {
+		// 如果普通终止失败，尝试强制终止
+		fmt.Println("Attempting force kill...")
+		if err := sudoSession.RunWithPrivileges("kill", "-9", fmt.Sprintf("%d", pid)); err != nil {
+			fmt.Printf("Warning: Could not kill process: %v\n", err)
+		}
 	}
 
 	// 删除PID文件
-	os.Remove(DNSPIDFile)
+	if err := sudoSession.RunWithPrivileges("rm", "-f", DNSPIDFile); err != nil {
+		fmt.Printf("Warning: could not remove PID file: %v\n", err)
+	}
 
 	// 恢复系统DNS设置
 	if err := dns.RestoreSystemDNS(); err != nil {
 		return fmt.Errorf("failed to restore system DNS: %w", err)
 	}
 
-	fmt.Println("DNS service stopped successfully. System DNS settings restored.")
+	fmt.Println("DNS service stopped and system DNS settings restored.")
 	return nil
 }
 
