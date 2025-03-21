@@ -16,7 +16,7 @@ In network environments using OpenWrt as a bypass router, users often need to sw
 
 - **Seamless Gateway Switching**: Switch between main router and OpenWrt bypass router gateways with a single command
 - **DNS Leak Protection**: Built-in DNS proxy feature ensures all DNS requests go through the proxy gateway
-- **Daemon Mode**: Run as a background daemon for continuous and stable service
+- **Feature Separation Design**: Gateway switching and DNS services operate independently, use as needed
 - **Cross-Platform Support**: Compatible with macOS, Linux, and Windows systems
 - **Configuration Persistence**: Automatically remembers your gateway configurations
 - **Permission Management**: Built-in sudo session management to avoid repeated password entry
@@ -97,24 +97,19 @@ gateshift install
 # Uninstall from system
 gateshift uninstall
 
-# DNS features
-gateshift dns enable                          # Enable DNS proxy
-gateshift dns disable                         # Disable DNS proxy
-gateshift dns set-port 5353                   # Set DNS listening port
-gateshift dns set-address 127.0.0.1           # Set DNS listening address
+# DNS features (independent of gateway switching)
+gateshift dns start                        # Start DNS service for DNS leak protection
+gateshift dns set-port 5353                # Set DNS listening port
+gateshift dns set-address 127.0.0.1        # Set DNS listening address
 gateshift dns set-upstream 1.1.1.1 8.8.8.8 9.9.9.9  # Set upstream DNS servers
-gateshift dns show                            # Show DNS configuration
-gateshift dns start                           # Start DNS service
-gateshift dns start -f                        # Start DNS service in foreground
-gateshift dns restart                         # Restart DNS service
-gateshift dns stop                            # Stop the running DNS service
-gateshift dns logs                            # View DNS logs
-gateshift dns logs -f                         # View DNS logs in real-time
-gateshift dns logs -n 100                     # View last 100 lines of DNS logs
-gateshift dns logs -F "google.com"            # Filter logs containing google.com
-
-# Daemon mode
-gateshift daemon -d                           # Run in daemon mode
+gateshift dns show                         # Show DNS configuration
+gateshift dns start -f                     # Start DNS service in foreground
+gateshift dns restart                      # Restart DNS service
+gateshift dns stop                         # Stop the running DNS service
+gateshift dns logs                         # View DNS logs
+gateshift dns logs -f                      # View DNS logs in real-time
+gateshift dns logs -n 100                  # View last 100 lines of DNS logs
+gateshift dns logs -F "google.com"         # Filter logs containing google.com
 ```
 
 ## Configuration
@@ -127,14 +122,22 @@ Default configuration:
 proxy_gateway: 192.168.31.100  # OpenWrt bypass router IP
 default_gateway: 192.168.31.1  # Main router IP
 dns:
-  enabled: false               # Whether DNS proxy is enabled
   listen_addr: 127.0.0.1       # DNS listening address
   listen_port: 53              # DNS listening port
   upstream_dns:                # Upstream DNS server list
     - 1.1.1.1:53
     - 8.8.8.8:53
-    - 9.9.9.9:53
 ```
+
+## Gateway Switching and DNS Services
+
+GateShift designs gateway switching and DNS services as completely independent features, users can choose to use them based on needs:
+
+1. **Gateway Switching Only**: Use the `gateshift proxy` or `gateshift default` commands
+2. **DNS Service Only**: Use the `gateshift dns start` series of commands
+3. **Combined Usage**: First switch gateways, then manually start the DNS service
+
+This design provides greater flexibility, allowing users to freely combine features according to their requirements.
 
 ## Detailed DNS Features
 
@@ -152,11 +155,10 @@ When using proxy networks, DNS requests can sometimes bypass the proxy and go di
 
 ### DNS Service Running Modes
 
-GateShift offers three DNS service running modes to accommodate different scenarios:
+GateShift offers two DNS service running modes to accommodate different scenarios:
 
-1. **Standard Mode**: `sudo gateshift dns start` - Starts the DNS service and exits
-2. **Foreground Mode**: `sudo gateshift dns start -f` - Starts DNS service and keeps running in the foreground
-3. **Daemon Mode**: `sudo gateshift daemon -d` - Runs as a background daemon
+1. **Background Mode**: `gateshift dns start` - Starts the DNS service and exits the terminal
+2. **Foreground Mode**: `gateshift dns start -f` - Starts DNS service and keeps running in the foreground (press Ctrl+C to stop)
 
 Note: DNS services typically require administrator/root privileges as they need to:
 - Bind to privileged ports (port 53 is below 1024)
@@ -165,10 +167,6 @@ Note: DNS services typically require administrator/root privileges as they need 
 ### DNS Configuration Management
 
 ```bash
-# Enable/disable DNS proxy (only modifies configuration, doesn't start/stop service)
-gateshift dns enable
-gateshift dns disable
-
 # Set DNS listening address and port
 gateshift dns set-address 127.0.0.1  # Default listens on localhost
 gateshift dns set-port 53            # Default uses port 53
@@ -178,7 +176,7 @@ gateshift dns set-port 10053         # Use a non-privileged port
 
 # Configure upstream DNS servers (multiple can be set)
 gateshift dns set-upstream 1.1.1.1 8.8.8.8 9.9.9.9
-# System will automatically add ":53" port suffix
+# System will automatically add ":53" port suffix if not present
 
 # View current DNS configuration and running status
 gateshift dns show
@@ -188,8 +186,9 @@ gateshift dns show
 
 ```bash
 # Start DNS service
-sudo gateshift dns start          # Start background service
+sudo gateshift dns start          # Start background service (sudo required for port 53)
 sudo gateshift dns start -f       # Run in foreground (press Ctrl+C to stop)
+gateshift dns start -f            # No sudo needed when using non-privileged ports (like 10053)
 
 # Stop DNS service
 sudo gateshift dns stop
@@ -218,7 +217,18 @@ gateshift dns logs -F "error"     # View only error messages
 gateshift dns logs -F "query"     # View only query requests
 
 # Combined usage
-gateshift dns logs -F "baidu" -n 10 -f  # Real-time view of the latest 10 lines containing "baidu"
+gateshift dns logs -F "google" -n 10 -f  # Real-time view of the latest 10 lines containing "google"
+```
+
+### Log and Configuration File Locations
+
+GateShift stores all data in the `.gateshift` folder in the user's home directory:
+
+```
+~/.gateshift/               # Main configuration directory
+├── config.yaml             # Configuration file
+└── logs/                   # Logs directory
+    └── gateshift-dns.log   # DNS service log file
 ```
 
 ## Typical Use Cases
